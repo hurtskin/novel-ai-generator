@@ -16,3 +16,4 @@ __pycache__/
 
 # Node modules (for Tauri/React)
 novel_ai/node_modules/
+API_IMPLEMENTATION_PLAN.md

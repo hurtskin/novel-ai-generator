@@ -269,7 +269,7 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 
-@router.websocket("/connect")
+@router.websocket("/stream")
 async def websocket_endpoint(websocket: WebSocket):
     """
     WebSocket 连接端点

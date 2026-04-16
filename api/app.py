@@ -110,21 +110,21 @@ def _register_routes(app: FastAPI) -> None:
     # 生成相关路由
     app.include_router(
         generation.router,
-        prefix="/api/v1/generation",
+        prefix="/api",
         tags=["generation"],
     )
     
     # WebSocket 路由
     app.include_router(
         websocket.router,
-        prefix="/api/v1/ws",
+        prefix="/api",
         tags=["websocket"],
     )
     
     # 快照管理路由
     app.include_router(
         snapshots.router,
-        prefix="/api/v1/snapshots",
+        prefix="/api",
         tags=["snapshots"],
     )
     
