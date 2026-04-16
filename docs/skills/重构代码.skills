@@ -1,0 +1,199 @@
+---
+name: refactor-to-interfaces
+description: When user needs to refactor Python code to follow interface-oriented design principles, analyze existing code structure, create interface abstractions, implement dependency injection, and migrate code in phases while maintaining functionality
+version: 1.0.0
+tags: [python, refactoring, interface-oriented, dependency-injection, architecture]
+---
+
+# 面向接口代码重构专家
+
+## 目标
+将现有 Python 代码库重构为面向接口架构，实现依赖注入、模块解耦、可测试性和可扩展性。
+
+## 触发条件
+- 用户要求"重构代码，面向接口"
+- 用户要求"实现依赖注入"
+- 用户要求"解耦模块"
+- 用户要求"提高代码可测试性"
+- 用户要求"按 FILEINDEX.md 重构"
+
+## 前置检查
+1. 确认存在 `FILEINDEX.md` 或类似的架构设计文档
+2. 确认了解现有代码的主要模块和依赖关系
+3. 确认有版本控制（git）可以回滚
+4. 检查是否有测试用例可以验证重构后功能
+
+## 执行流程
+
+### 阶段 1：分析现有代码
+**动作**：扫描项目结构，识别核心类和依赖关系
+**工具**：`Glob`, `Read`, `SearchCodebase`
+**成功标准**：
+- 列出所有需要重构的模块
+- 绘制现有依赖关系图
+- 识别单例模式和硬编码依赖
+
+**失败处理**：如果代码结构过于复杂，建议先创建简化版本再重构
+
+### 阶段 2：创建接口层
+**动作**：根据 FILEINDEX.md 创建 `interfaces/` 目录和抽象接口
+**工具**：`Write`
+**成功标准**：
+- 所有核心功能都有对应的接口定义
+- 接口使用 `ABC` 和 `abstractmethod` 定义
+- 接口文档清晰说明契约
+
+**文件创建清单**：
+1. `interfaces/__init__.py`
+2. `interfaces/llm_client.py` - LLM 客户端接口
+3. `interfaces/embedding.py` - 嵌入服务接口
+4. `interfaces/memory.py` - 记忆存储接口
+5. `interfaces/observability.py` - 可观测性接口
+6. `interfaces/config.py` - 配置管理接口
+7. `interfaces/storage.py` - 持久化存储接口
+
+### 阶段 3：创建实现层
+**动作**：将现有类适配到新接口
+**工具**：`Write`, `SearchReplace`
+**成功标准**：
+- 每个接口都有至少一个实现
+- 实现类放在 `implementations/` 目录
+- 保持原有功能不变
+
+**实现类映射**：
+| 原文件 | 新位置 | 实现接口 |
+|--------|--------|----------|
+| `llm_client.py` | `implementations/llm/moonshot_client.py` | `LLMClient` |
+| `memory_store.py` | `implementations/memory/simple_memory_store.py` | `MemoryStore` |
+| `rag_memory.py` | `implementations/memory/rag_memory_store.py` | `MemoryStore` |
+| `observability.py` | `implementations/observability/file_backend.py` | `ObservabilityBackend` |
+
+### 阶段 4：实现依赖注入容器
+**动作**：创建 `core/container.py` 依赖注入容器
+**工具**：`Write`
+**成功标准**：
+- 容器支持注册实例和工厂
+- 容器支持按接口解析依赖
+- 容器支持单例和瞬态生命周期
+
+**容器 API**：
+```python
+container.register_instance(Interface, instance)
+container.register_factory(Interface, factory_func)
+instance = container.resolve(Interface)
+```
+
+### 阶段 5：重构业务逻辑
+**动作**：将 `llm_nodes.py` 等文件拆分到 `core/` 目录
+**工具**：`Write`, `DeleteFile`
+**成功标准**：
+- 每个节点独立成文件
+- 节点函数通过参数接收依赖，不直接实例化
+- 所有导入使用接口而非实现
+
+**文件拆分**：
+- `llm_nodes.py` → `core/nodes/*.py`
+- `iterators.py` → `core/iterators/*.py`
+- `context_managers.py` → `core/context/*.py`
+
+### 阶段 6：重构 API 层
+**动作**：创建 `api/` 目录，拆分路由
+**工具**：`Write`
+**成功标准**：
+- FastAPI 应用创建在 `api/app.py`
+- 路由按功能拆分
+- 使用依赖注入获取服务实例
+
+### 阶段 7：更新入口文件
+**动作**：精简 `main.py`，初始化容器
+**工具**：`SearchReplace`
+**成功标准**：
+- `main.py` 只负责初始化和启动
+- 所有配置通过容器注入
+- 启动时打印依赖映射信息
+
+### 阶段 8：验证和测试
+**动作**：运行测试确保功能正常
+**工具**：`RunCommand`
+**成功标准**：
+- 所有现有测试通过
+- 可以成功启动应用
+- 核心功能正常工作
+
+## 边界与约束
+- **不做**：不修改业务逻辑，只改变架构
+- **不做**：不引入新的外部依赖（除非必要）
+- **限制**：保持 Python 3.9+ 兼容性
+- **安全**：不暴露 API 密钥和敏感配置
+
+## 输出规范
+
+### 每阶段完成时输出
+```markdown
+## 阶段 X 完成: [阶段名称]
+
+### 创建/修改的文件
+- `path/to/file1.py` - 职责说明
+- `path/to/file2.py` - 职责说明
+
+### 依赖关系变更
+- 原: `A` → `B` (直接依赖)
+- 新: `A` → `IB` ← `B` (依赖接口)
+
+### 下一步
+[下一阶段描述]
+```
+
+### 重构完成时输出
+```markdown
+## 重构完成总结
+
+### 架构改进
+- 接口数量: [N]
+- 实现类数量: [N]
+- 依赖注入点: [N]
+
+### 文件变更
+- 新增: [N] 个文件
+- 修改: [N] 个文件
+- 删除: [N] 个文件
+
+### 验证结果
+- 测试通过: [Y/N]
+- 应用启动: [Y/N]
+- 核心功能: [Y/N]
+
+### 后续建议
+1. 添加单元测试
+2. 添加集成测试
+3. 更新文档
+```
+
+## 验证清单
+- [ ] 接口层完整定义
+- [ ] 实现层正确实现接口
+- [ ] 依赖注入容器正常工作
+- [ ] 业务逻辑不依赖具体实现
+- [ ] API 层正确注入依赖
+- [ ] 应用可以正常启动
+- [ ] 核心功能测试通过
+- [ ] 无循环依赖
+- [ ] 无未使用导入
+
+## 常见问题处理
+
+### 循环依赖
+**现象**：接口 A 依赖接口 B，接口 B 又依赖接口 A
+**解决**：提取共同依赖到第三个接口 C
+
+### 过多参数
+**现象**：构造函数参数过多（>5 个）
+**解决**：使用数据类封装配置对象
+
+### 难以测试的遗留代码
+**现象**：某些函数依赖全局状态
+**解决**：先创建适配器包装遗留代码，再逐步重构
+
+### 配置分散
+**现象**：配置散落在多个文件
+**解决**：统一使用 `ConfigProvider` 接口获取配置

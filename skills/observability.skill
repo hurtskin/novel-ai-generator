@@ -1,0 +1,334 @@
+---
+name: observability
+description: When monitoring novel generation performance, use Observability singleton for distributed tracing, metrics collection, logging, WebSocket broadcasting, and snapshot management
+version: 1.0.0
+tags: [observability, tracing, metrics, logging, websocket, snapshot]
+---
+
+# 可观测性模块
+
+## 目标
+提供完整的可观测性支持，包括分布式追踪、性能指标收集、日志记录、WebSocket广播和快照管理，用于监控和调试小说生成过程。
+
+## 触发条件
+- 需要追踪节点执行时间和性能指标
+- 需要记录日志到文件
+- 需要广播消息到 WebSocket 客户端
+- 需要保存/恢复生成状态快照
+- 需要查看性能汇总报告
+
+## 前置检查
+1. logs/ 目录可写
+2. config.yaml 包含定价配置
+3. WebSocket 连接已注册
+
+## 核心类
+
+### Observability（单例模式）
+
+**获取实例**：
+```python
+from observability import get_observability
+
+obs = get_observability()
+```
+
+**初始化流程**：
+```
+__new__() → 线程安全的单例检查
+    ↓
+__init__() → 初始化
+    ├── 加载 config.yaml
+    ├── 创建 logs/ 目录
+    ├── 生成 trace_id（基于时间戳）
+    ├── 创建日志文件（novel_YYYYMMDD_HHMMSS.log）
+    ├── 创建追踪文件（trace_YYYYMMDD_HHMMSS.jsonl）
+    └── 初始化指标存储
+```
+
+## 功能模块
+
+### 1. 日志记录
+
+**方法**：`log_event(level, chapter, node, message)`
+
+**日志格式**：
+```
+[2026-01-15T10:30:45.123456] [INFO] [C1/Nnode_1] Node started, span_id=abc123
+```
+
+**使用示例**：
+```python
+obs.log_event("INFO", 1, "node_1", "Processing started")
+obs.log_event("WARNING", 1, "node_2", "Retry attempt 1")
+obs.log_event("ERROR", 2, "node_3", "API call failed")
+```
+
+**日志文件**：`logs/novel_YYYYMMDD_HHMMSS.log`
+
+### 2. 分布式追踪
+
+**开始 Span**：
+```python
+with obs.start_span(chapter=1, node="node_1") as span_id:
+    # 执行节点逻辑
+    result = role_actor(...)
+    
+    # 结束 Span（传入使用情况和性能数据）
+    obs.end_span(span_id, usage, performance)
+```
+
+**追踪数据结构**：
+```python
+# Enter 事件
+{
+    "trace_id": "novel_20260115_103045",
+    "chapter": 1,
+    "node": "node_1",
+    "event": "enter",
+    "timestamp": "2026-01-15T10:30:45.123456",
+    "span_id": "abc123"
+}
+
+# Exit 事件
+{
+    "trace_id": "novel_20260115_103045",
+    "chapter": 1,
+    "node": "node_1",
+    "event": "exit",
+    "duration_ms": 5234,
+    "output_hash": "a1b2c3",
+    "cost_usd": 0.001234,
+    "prompt_tokens": 1024,
+    "completion_tokens": 512,
+    "timestamp": "2026-01-15T10:30:50.357890"
+}
+```
+
+**追踪文件**：`logs/trace_YYYYMMDD_HHMMSS.jsonl`（JSON Lines 格式）
+
+### 3. 性能指标收集
+
+**节点级别指标**（Node Metrics）：
+```python
+{
+    "node_id": "node_1",
+    "chapter": 1,
+    "model": "kimi-k2.5",
+    "prompt_tokens": 1024,
+    "completion_tokens": 512,
+    "total_tokens": 1536,
+    "ttf_ms": 1234,        # Time To First Token
+    "tps": 45.6,           # Tokens Per Second
+    "duration_ms": 5234,
+    "api_latency_ms": 5234,
+    "retry_count": 0,
+    "cost_usd": 0.001234
+}
+```
+
+**章节级别指标**（Chapter Metrics）：
+```python
+{
+    "chapter_id": 1,
+    "total_nodes": 10,
+    "total_duration_ms": 52340,
+    "total_tokens": 15360,
+    "total_retries": 2,
+    "total_cost_usd": 0.01234
+}
+```
+
+**总计指标**（Total Metrics）：
+```python
+{
+    "total_chapters": 3,
+    "total_duration_ms": 157020,
+    "total_tokens": 46080,
+    "total_cost_usd": 0.03702
+}
+```
+
+**成本计算**：
+```python
+cost_usd = (prompt_tokens * input_price + completion_tokens * output_price) / 1_000_000
+
+# 定价配置（config.yaml）
+pricing:
+  "kimi-k2.5":
+    input_per_million: 12   # $12 per 1M input tokens
+    output_per_million: 60  # $60 per 1M output tokens
+```
+
+### 4. WebSocket 广播
+
+**注册连接**：
+```python
+obs.register_ws(websocket_connection)
+```
+
+**广播消息**：
+```python
+obs.broadcast("progress", {
+    "current": 1,
+    "total": 10,
+    "percentage": 10.0
+})
+```
+
+**注销连接**：
+```python
+obs.unregister_ws(websocket_connection)
+```
+
+**自动清理**：广播时会自动检测并清理断开的连接
+
+### 5. 性能汇总报告
+
+**获取汇总**：
+```python
+summary = obs.get_performance_summary()
+```
+
+**返回结构**：
+```python
+{
+    "per_node": [...],      # 所有节点指标列表
+    "per_chapter": [...],   # 所有章节指标列表
+    "summary": {
+        "total_chapters": 3,
+        "total_duration_min": 2.62,
+        "total_tokens": 46080,
+        "total_cost_usd": 0.03702,
+        "avg_chapter_time_min": 0.87
+    }
+}
+```
+
+### 6. 快照管理
+
+**保存快照**：
+```python
+snapshot_path = obs.save_snapshot("checkpoint_1")
+# 返回: logs/snapshots/checkpoint_1.json
+```
+
+**快照内容**：
+```python
+{
+    "timestamp": "2026-01-15T10:30:45.123456",
+    "trace_id": "novel_20260115_103045",
+    "generation_state": {
+        "current_chapter": 1,
+        "current_node": "node_5"
+    },
+    "node_metrics": [...],
+    "chapter_metrics": {...},
+    "total_metrics": {...}
+}
+```
+
+**加载快照**：
+```python
+snapshot_data = obs.load_snapshot("checkpoint_1")
+```
+
+**列出现有快照**：
+```python
+snapshots = obs.list_snapshots()
+# 返回: ["checkpoint_1", "checkpoint_2", ...]
+```
+
+## 便捷函数
+
+模块提供了一系列便捷函数，无需直接操作 Observability 实例：
+
+```python
+from observability import (
+    log_event,
+    start_span,
+    end_span,
+    broadcast,
+    get_performance_summary,
+    save_snapshot,
+    load_snapshot,
+    list_snapshots
+)
+
+# 使用便捷函数
+log_event("INFO", 1, "node_1", "Message")
+span_id = start_span(1, "node_1")
+end_span(span_id, usage, performance)
+broadcast("status", {"progress": 50})
+summary = get_performance_summary()
+```
+
+## 使用示例
+
+### 完整追踪示例
+
+```python
+from observability import get_observability
+
+obs = get_observability()
+
+# 记录事件
+obs.log_event("INFO", 1, "DIRECTOR_CHAPTER", "Starting chapter 1")
+
+# 开始 Span
+with obs.start_span(1, "role_actor") as span_id:
+    # 调用 LLM
+    result = client.chat(messages=..., stream_callback=on_token)
+    
+    # 准备性能数据
+    usage = result.get("usage", {})
+    performance = result.get("performance", {})
+    performance["retry_count"] = retry_count
+    
+    # 结束 Span（自动记录指标）
+    obs.end_span(span_id, usage, performance)
+
+# 广播进度
+obs.broadcast("progress", {
+    "current": 1,
+    "total": 10,
+    "percentage": 10.0,
+    "current_node": "role_actor"
+})
+
+# 保存快照
+obs.save_snapshot("after_chapter_1")
+
+# 获取性能汇总
+summary = obs.get_performance_summary()
+print(f"Total cost: ${summary['summary']['total_cost_usd']}")
+```
+
+## 文件输出
+
+**日志文件**：
+- 路径：`logs/novel_YYYYMMDD_HHMMSS.log`
+- 格式：纯文本，带时间戳和级别
+
+**追踪文件**：
+- 路径：`logs/trace_YYYYMMDD_HHMMSS.jsonl`
+- 格式：JSON Lines，每行一个事件
+
+**快照文件**：
+- 路径：`logs/snapshots/{name}.json`
+- 格式：格式化的 JSON
+
+## 边界与约束
+- **单例模式**：全局只有一个 Observability 实例
+- **线程安全**：使用 threading.Lock 确保线程安全
+- **文件句柄**：日志文件保持打开状态，需要调用 close()
+- **内存存储**：指标存储在内存中，重启后丢失（需使用快照恢复）
+- **成本估算**：基于配置的定价，实际成本可能略有差异
+
+## 验证清单
+- [ ] logs/ 目录存在且可写
+- [ ] config.yaml 包含 pricing 配置
+- [ ] WebSocket 连接正确注册和注销
+- [ ] Span 正确开始和结束
+- [ ] 快照正确保存和加载
+- [ ] 程序退出时调用 close() 关闭文件句柄

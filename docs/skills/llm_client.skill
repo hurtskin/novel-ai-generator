@@ -1,0 +1,299 @@
+---
+name: llm-client
+description: When making LLM API calls, use LlmClient singleton with automatic retry, streaming support, JSON completion check, and performance metrics collection for Moonshot and Ollama providers
+version: 1.0.0
+tags: [llm-client, api-client, streaming, retry-mechanism, moonshot, ollama]
+---
+
+# LLM 客户端
+
+## 目标
+提供统一的 LLM API 调用接口，支持 Moonshot 和 Ollama 两种提供商，具备自动重试、流式输出、JSON 完整性检查和性能指标收集功能。
+
+## 触发条件
+- 需要调用 LLM API 生成内容
+- 需要流式接收生成内容
+- 需要检查 JSON 响应完整性
+- 需要收集性能指标（延迟、token数、成本）
+
+## 前置检查
+1. config.yaml 配置正确（API 密钥、模型、超时设置）
+2. 环境变量 API_KEY 已设置（如果使用 ${API_KEY} 格式）
+3. 网络连接正常
+
+## 核心类
+
+### LlmClient（单例模式）
+
+**获取实例**：
+```python
+from llm_client import get_llm_client
+
+client = get_llm_client()
+```
+
+**初始化流程**：
+```
+__new__() → 检查单例
+    ↓
+__init__() → 加载配置
+    ├── 读取 config.yaml
+    ├── 解析 API 密钥（支持环境变量）
+    ├── 设置 base_url, model, timeout
+    └── 加载定价配置
+```
+
+**配置加载**：
+```python
+# 支持环境变量引用
+api_key: "${API_KEY}"  # 从 os.environ.get("API_KEY") 读取
+```
+
+## 主要方法
+
+### 1. chat() - 标准流式调用
+
+**用途**：通用的流式 API 调用方法
+
+**参数**：
+
+| 参数 | 类型 | 说明 | 默认值 |
+|------|------|------|--------|
+| `messages` | list[dict] | 消息列表 | 必填 |
+| `model` | str | 模型名称 | config 中的 model |
+| `temperature` | float | 温度 | config 中的 temperature |
+| `top_p` | float | Top P | config 中的 top_p |
+| `max_tokens` | int | 最大 token 数 | config 中的 max_tokens |
+| `stream_callback` | Callable | 流式回调函数 | None |
+| `cache_id` | str | 缓存 ID | None |
+
+**返回值**：
+```python
+{
+    "content": str,              # 完整生成内容
+    "usage": {
+        "prompt_tokens": int,
+        "completion_tokens": int,
+        "total_tokens": int,
+        "cached_tokens": int,
+    },
+    "cache": {
+        "cache_hit": bool,
+        "cache_id": str | None,
+    },
+    "performance": {
+        "ttf_ms": float,         # Time To First Token (ms)
+        "tps": float,            # Tokens Per Second
+        "api_latency_ms": float,
+        "cost_usd": float,
+    },
+}
+```
+
+**使用示例**：
+```python
+def on_token(token: str):
+    print(token, end="", flush=True)
+
+result = client.chat(
+    messages=[
+        {"role": "system", "content": "You are a helpful assistant."},
+        {"role": "user", "content": "Write a story."}
+    ],
+    stream_callback=on_token
+)
+
+print(f"\nTotal tokens: {result['usage']['total_tokens']}")
+print(f"Cost: ${result['performance']['cost_usd']}")
+```
+
+### 2. chat_with_completion_check() - JSON 完整性检查
+
+**用途**：流式调用并在 JSON 完整时提前返回，避免不必要的 token 消耗
+
+**额外参数**：
+
+| 参数 | 类型 | 说明 | 默认值 |
+|------|------|------|--------|
+| `check_interval` | int | 检查间隔（字符数） | 100 |
+
+**工作原理**：
+```
+流式接收 token
+    ↓
+累积到 check_interval 长度
+    ↓
+调用 _check_json_complete()
+    ↓
+[JSON 完整] → 立即返回
+[不完整] → 继续接收
+```
+
+**使用场景**：
+- 需要 JSON 格式输出
+- 希望减少不必要的 token 消耗
+- 对响应时间敏感
+
+### 3. reload_config() - 热重载配置
+
+**用途**：运行时重新加载配置文件
+
+```python
+# 修改 config.yaml 后
+client.reload_config()
+# 新配置立即生效
+```
+
+## 重试机制
+
+### 重试策略
+
+| 状态码 | 重试策略 | 等待时间 |
+|--------|---------|---------|
+| 429 (Rate Limit) | 线性退避 | 30 * retry_count 秒 |
+| 5xx (Server Error) | 指数退避 | 2^(retry_count-1) 秒 |
+| Timeout | 指数退避 | 2^(retry_count-1) 秒 |
+| Connection Error | 指数退避 | 2^(retry_count-1) 秒 |
+
+**最大重试次数**：`config.api.max_retries`（默认 5）
+
+## 提供商支持
+
+### Moonshot（默认）
+
+**配置示例**：
+```yaml
+api:
+  provider: moonshot
+  base_url: "https://api.moonshot.cn/v1"
+  api_key: "${API_KEY}"
+  model: "kimi-k2.5"
+  timeout: 300
+  max_retries: 5
+```
+
+**特性**：
+- 支持流式输出
+- 支持 JSON 模式（`response_format: {"type": "json_object"}`）
+- 支持 Context Caching
+- 成本计算（基于定价配置）
+
+### Ollama（本地模型）
+
+**配置示例**：
+```yaml
+api:
+  provider: moonshot  # 主提供商
+
+ollama:
+  enabled: true
+  base_url: "http://localhost:11434"
+  model: "llama3"
+  timeout: 300
+```
+
+**切换方式**：
+```python
+# 当 provider == "ollama" 且 ollama.enabled == true 时
+# 自动使用 Ollama 后端
+```
+
+**特性**：
+- 零成本（本地运行）
+- 相同的流式接口
+- 支持 JSON 完整性检查
+
+## 辅助方法
+
+### JSON 完整性检查
+
+```python
+def _check_json_complete(self, content: str) -> bool:
+    """
+    检查内容是否包含完整且有效的 JSON
+    要求：必须有非空的 content 字段
+    """
+```
+
+**处理步骤**：
+1. 去除 markdown 代码块标记
+2. 去除 HTML 实体编码
+3. 去除控制字符
+4. 使用括号匹配找到完整 JSON 对象
+5. 修复尾随逗号
+6. 验证 JSON 可解析
+7. 检查 content 字段非空
+
+### Token 估算
+
+```python
+def _estimate_tokens(self, text: str | list) -> int:
+    """简单估算：字符数 // 4"""
+```
+
+### 成本计算
+
+```python
+def _calculate_cost(
+    self, 
+    prompt_tokens: int, 
+    completion_tokens: int, 
+    pricing_config: dict, 
+    cached_tokens: int = 0
+) -> float
+```
+
+**定价配置示例**：
+```yaml
+pricing:
+  "kimi-k2.5":
+    input_per_million: 12        # $12 per 1M input tokens
+    output_per_million: 60       # $60 per 1M output tokens
+    cache_discount: 0.1          # 缓存 token 10% 折扣
+```
+
+## 错误处理
+
+### 常见异常
+
+| 异常 | 原因 | 处理建议 |
+|------|------|---------|
+| `Exception: API rate limit exceeded` | 超过速率限制 | 增加重试次数或降低请求频率 |
+| `Exception: API error after N retries` | 服务端错误 | 检查 API 状态或切换模型 |
+| `Exception: Request timeout` | 请求超时 | 增加 timeout 配置 |
+| `Exception: API request failed with status 401` | API 密钥无效 | 检查 API_KEY 环境变量 |
+
+## 性能指标
+
+### 收集的指标
+
+| 指标 | 说明 | 用途 |
+|------|------|------|
+| `ttf_ms` | 首 token 延迟 | 评估 API 响应速度 |
+| `tps` | 每秒 token 数 | 评估生成速度 |
+| `api_latency_ms` | 总延迟 | 评估整体性能 |
+| `cost_usd` | 预估成本 | 成本控制 |
+
+### 日志输出
+
+所有 API 调用记录到 `logs/debug.log`：
+```
+[LLM_API] REQUEST: model=kimi-k2.5, endpoint=...
+[LLM_API] messages=...
+[LLM_API] RESPONSE: length=1234, content=...
+```
+
+## 边界与约束
+- **单例模式**：全局只有一个 LlmClient 实例
+- **线程安全**：未做显式线程同步，建议单线程使用
+- **Token 估算**：简单字符除法，非精确值
+- **JSON 检查**：仅检查格式，不验证 Schema
+- **流式回调**：同步调用，长时间处理会阻塞接收
+
+## 验证清单
+- [ ] config.yaml 存在且格式正确
+- [ ] API_KEY 环境变量已设置（如果使用）
+- [ ] 网络连接正常
+- [ ] 流式回调函数不会阻塞过长时间
+- [ ] 正确处理 API 异常
+- [ ] 检查性能指标是否符合预期

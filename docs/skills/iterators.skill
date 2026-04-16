@@ -1,0 +1,238 @@
+---
+name: iterators
+description: When iterating over chapters or nodes in novel generation, use NodeSequence for retry-capable node iteration and ChapterIterator for simple chapter range iteration
+version: 1.0.0
+tags: [iteration, node-sequence, chapter-iterator, retry-mechanism]
+---
+
+# 迭代器工具
+
+## 目标
+提供支持重试机制的节点序列迭代器和简单的章节范围迭代器，用于小说生成流程中的遍历控制。
+
+## 触发条件
+- 需要遍历章节列表时
+- 需要遍历节点序列并支持重试时
+- 节点审查失败需要回退重试时
+
+## 前置检查
+1. `NodeSequence` 需要传入节点列表
+2. `ChapterIterator` 需要传入起始和结束章节号
+
+## 迭代器说明
+
+### 1. NodeSequence 节点序列迭代器
+
+**用途**：遍历章节内的节点序列，支持重试机制
+
+**初始化**：
+```python
+node_sequence = [
+    {"node_id": "node_1", "type": "dialogue", "character": "Alice", ...},
+    {"node_id": "node_2", "type": "action", "character": "Bob", ...},
+    ...
+]
+sequence = NodeSequence(node_sequence)
+```
+
+**属性**：
+
+| 属性 | 类型 | 说明 |
+|------|------|------|
+| `node_sequence` | list | 节点列表 |
+| `current_index` | int | 当前索引（下一个要返回的节点） |
+| `retry_count` | int | 当前节点重试次数 |
+| `retry_index` | int \| None | 重试目标索引 |
+
+**基本迭代**：
+```python
+for node in sequence:
+    # 处理节点
+    print(f"Processing {node['node_id']}")
+```
+
+**执行流程**：
+```
+__next__() 调用
+    ↓
+retry_index 是否为 None?
+    ↓ 否                    ↓ 是
+返回 retry_index 节点    current_index >= len?
+重置 retry_index = None      ↓ 是
+                         抛出 StopIteration
+                             ↓ 否
+                         返回 current_index 节点
+                         current_index += 1
+```
+
+**重试机制**：
+```python
+# 节点处理失败时调用
+sequence.send(feedback)
+# 返回: "retry_node"
+# 副作用:
+#   - retry_count += 1
+#   - retry_index = current_index - 1
+```
+
+**完整示例**：
+```python
+sequence = NodeSequence(chapter_plan["node_sequence"])
+feedback = ""
+
+for node in sequence:
+    node_id = node.get("node_id", f"node_{sequence.current_index}")
+    
+    # 执行节点生成
+    result = role_actor(..., feedback=feedback)
+    
+    # 审查结果
+    check_result = self_check(...)
+    
+    if check_result["needs_revision"]:
+        feedback = check_result.get("improvement_suggestions", "")
+        
+        # 检查是否超过最大重试次数
+        if sequence.retry_count >= max_retries:
+            # 触发人工干预
+            ...
+        else:
+            # 触发重试
+            sequence.send(feedback)
+    else:
+        # 通过，清空反馈
+        feedback = ""
+        sequence.retry_count = 0
+```
+
+**状态检查**：
+```python
+# 获取当前索引（注意：这是下一个要处理的节点索引）
+current_idx = sequence.current_index
+
+# 获取重试次数
+retries = sequence.retry_count
+
+# 是否在重试模式
+is_retrying = sequence.retry_index is not None
+```
+
+### 2. ChapterIterator 章节迭代器
+
+**用途**：简单的章节范围迭代
+
+**初始化**：
+```python
+# 遍历第1章到第10章（包含第1，不包含第11）
+chapters = ChapterIterator(1, 11)
+```
+
+**属性**：
+
+| 属性 | 类型 | 说明 |
+|------|------|------|
+| `start` | int | 起始章节号 |
+| `end` | int | 结束章节号（不包含） |
+| `current` | int | 当前章节号 |
+
+**基本使用**：
+```python
+chapter_count = plan.get("chapter_count", 3)
+
+for chapter_id in ChapterIterator(1, chapter_count + 1):
+    print(f"Processing Chapter {chapter_id}")
+    
+    with ChapterContext(chapter_id, "config.yaml", "global_memory.json") as ctx:
+        # 处理章节
+        ...
+```
+
+**执行流程**：
+```
+__next__() 调用
+    ↓
+current >= end?
+    ↓ 是                ↓ 否
+抛出 StopIteration    返回 current
+                      current += 1
+```
+
+## 对比
+
+| 特性 | NodeSequence | ChapterIterator |
+|------|--------------|-----------------|
+| 用途 | 节点序列遍历 | 章节号遍历 |
+| 重试支持 | 是 | 否 |
+| 状态管理 | 复杂（索引+重试计数） | 简单（当前值） |
+| 输入 | 节点列表 | 起始/结束整数 |
+| 使用场景 | 章节内节点循环 | 多章节外层循环 |
+
+## 组合使用
+
+**典型的小说生成流程**：
+```python
+# 外层：章节循环
+for chapter_id in ChapterIterator(1, chapter_count + 1):
+    
+    # 获取章节计划
+    chapter_plan = director_chapter(...)
+    
+    # 内层：节点循环（带重试）
+    sequence = NodeSequence(chapter_plan["node_sequence"])
+    
+    for node in sequence:
+        # 节点处理逻辑
+        ...
+        
+        if needs_retry:
+            sequence.send(feedback)
+```
+
+## 边界与约束
+- **NodeSequence**：
+  - 重试时会重新访问同一节点，但外部逻辑需要重新执行节点
+  - `current_index` 指向的是**下一个**要处理的节点
+  - `send()` 方法必须在迭代过程中调用
+  
+- **ChapterIterator**：
+  - 简单的数值迭代，无状态保持
+  - 结束值不包含（同 Python range）
+
+## 常见陷阱
+
+### 1. 索引理解错误
+```python
+# 错误理解：以为 current_index 是当前节点
+# 实际上 current_index 是下一个要处理的节点索引
+
+for node in sequence:
+    # 此时 sequence.current_index 已经指向下一个节点
+    current_idx = sequence.current_index - 1  # 当前节点索引
+```
+
+### 2. 重试后状态检查
+```python
+# 错误：在循环外检查重试次数
+for node in sequence:
+    ...
+    
+if sequence.retry_count > max_retries:  # 这检查的是最后一个节点
+    ...
+
+# 正确：在需要重试时立即检查
+for node in sequence:
+    ...
+    if needs_retry:
+        if sequence.retry_count >= max_retries:
+            # 处理最大重试
+        else:
+            sequence.send(feedback)
+```
+
+## 验证清单
+- [ ] NodeSequence 正确传入节点列表
+- [ ] ChapterIterator 的 end 参数比实际最后一章大1
+- [ ] 重试时调用 `sequence.send(feedback)` 而不是直接 continue
+- [ ] 检查重试次数在调用 send() 之后
+- [ ] 通过节点后重置 retry_count
+- [ ] 理解 current_index 指向的是下一个节点

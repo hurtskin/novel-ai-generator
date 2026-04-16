@@ -1,0 +1,42 @@
+api:
+  api_key: sk-Em9oXoGGhW7g2S3ibD3k0qhSpVtcz2aRnfbR5BLhwY75BwzH
+  base_url: https://api.moonshot.cn/v1
+  max_retries: 5
+  model: moonshot-v1-128k
+  provider: ollama
+  timeout: 180
+
+embedding:
+  api_key: sk-f3jcsqke5tgqp5jk
+  base_url: https://cloud.infini-ai.com/maas
+  model: bge-m3
+  dimensions: 1024
+  batch_size: 32
+
+generation:
+  debug: true
+  max_tokens: 8192
+  mock_mode: false
+  temperature: 1
+  top_p: 0.95
+genre: novel
+memory:
+  max_total: 20000
+  per_chapter: 5000
+  truncation_strategy: keep_first
+ollama:
+  base_url: http://localhost:11434
+  enabled: true
+  model: deepseek-v3.1:671b-cloud
+  timeout: 120
+performance:
+  cost_alert_usd: 5
+pricing:
+  kimi-k2.5:
+    input_per_million: 12
+    output_per_million: 60
+ui:
+  font_family: system-ui
+  font_size: 14
+  language: zh-CN
+  theme: light

@@ -1,0 +1,332 @@
+---
+name: rag-memory
+description: When implementing RAG-based memory retrieval, use EmbeddingClient for vectorization, VectorStore for similarity search, and RagMemorySystem for content ingestion and retrieval with metadata filtering
+version: 1.0.0
+tags: [rag, memory, embedding, vector-store, retrieval, similarity-search]
+---
+
+# RAG 记忆系统
+
+## 目标
+提供基于检索增强生成（RAG）的记忆系统，支持将小说内容向量化存储，并通过语义相似度检索相关历史内容，为角色扮演提供上下文记忆。
+
+## 触发条件
+- 需要将生成的内容存入向量库
+- 需要检索与当前场景相关的历史记忆
+- 需要基于角色和场景生成检索查询
+- 需要查看向量库统计信息
+
+## 前置检查
+1. config.yaml 包含 embedding 配置
+2. 向量库目录可写（默认 ./vector_store）
+3. Embedding API 可访问
+
+## 核心组件
+
+### 1. EmbeddingClient（单例）
+
+**功能**：将文本转换为向量嵌入
+
+**配置**（config.yaml）：
+```yaml
+embedding:
+  base_url: "https://cloud.infini-ai.com/maas"
+  api_key: "your-api-key"
+  model: "ember"
+  dimensions: 1024
+  batch_size: 32
+```
+
+**使用示例**：
+```python
+from rag_memory import EmbeddingClient
+
+client = EmbeddingClient()
+embeddings = client.embed(["文本1", "文本2", "文本3"])
+# 返回: [[0.1, 0.2, ...], [0.3, 0.4, ...], ...]
+```
+
+### 2. VectorStore
+
+**功能**：本地向量存储和相似度搜索
+
+**存储格式**：
+```python
+{
+    "chunks": ["文本块1", "文本块2", ...],
+    "embeddings": [[0.1, 0.2, ...], [0.3, 0.4, ...], ...],
+    "metadatas": [{"chapter_id": 1, ...}, ...]
+}
+```
+
+**相似度算法**：余弦相似度
+```python
+score = dot(a, b) / (norm(a) * norm(b))
+```
+
+**支持过滤**：
+```python
+# 按章节过滤
+results = vector_store.search(
+    query_embedding,
+    top_k=5,
+    filter_metadata={"chapter_id": 1}
+)
+```
+
+### 3. RagMemorySystem（单例）
+
+**功能**：整合嵌入和存储，提供高级 API
+
+**配置参数**：
+```python
+chunk_size = 500          # 文本块大小
+chunk_overlap = 50        # 块间重叠
+max_results = 5           # 最大返回结果数
+similarity_threshold = 0.5  # 相似度阈值
+```
+
+## 数据模型
+
+### ChunkMetadata
+```python
+@dataclass
+class ChunkMetadata:
+    chapter_id: int       # 章节ID
+    node_id: str          # 节点ID
+    unit_type: str        # 单元类型（narrator/dialogue/...）
+    characters: list[str] # 涉及角色
+    location: str         # 场景地点
+    timeline: str         # 时间线
+    emotions: list[str]   # 情感标签
+    keywords: list[str]   # 关键词
+    timestamp: str        # 时间戳
+```
+
+### RetrievalResult
+```python
+@dataclass
+class RetrievalResult:
+    content: str          # 检索到的文本内容
+    chunk_id: str         # 块ID
+    score: float          # 相似度分数
+    metadata: ChunkMetadata  # 元数据
+    source_type: str      # 来源类型
+```
+
+### RetrievalMetrics
+```python
+@dataclass
+class RetrievalMetrics:
+    query_time_ms: int    # 查询耗时（毫秒）
+    total_hits: int       # 总命中数
+    returned_results: int # 返回结果数
+```
+
+## 核心流程
+
+### 1. 内容摄入（Ingest）
+
+```
+输入内容
+    ↓
+文本分块（_chunk_text）
+    - 按 chunk_size 分割
+    - 在句号或换行处智能断句
+    - 保留 chunk_overlap 重叠
+    ↓
+生成嵌入（EmbeddingClient.embed）
+    ↓
+构建元数据（ChunkMetadata）
+    ↓
+存入向量库（VectorStore.add）
+    ↓
+保存到文件（index.json）
+```
+
+**使用示例**：
+```python
+from rag_memory import RagMemorySystem
+
+rag = RagMemorySystem()
+
+result = rag.ingest(
+    content="角色A走进了书房，开始思考...",
+    chapter_id=1,
+    node_id="node_1",
+    unit_type="narrator",
+    characters=["角色A"],
+    location="书房",
+    timeline="第三天下午",
+    emotions=["沉思", "焦虑"],
+    keywords=["书房", "思考"]
+)
+
+# 返回: {"index_status": True, "chunk_id": "node_1_0", "chunk_size": 1}
+```
+
+### 2. 内容检索（Retrieve）
+
+```
+输入查询列表
+    ↓
+对每个查询：
+    - 生成嵌入
+    - 向量相似度搜索
+    - 按章节过滤（可选）
+    - 合并结果（取最高相似度）
+    ↓
+按相似度排序
+    ↓
+过滤低于阈值的结果
+    ↓
+返回 Top-K 结果
+```
+
+**使用示例**：
+```python
+queries = ["角色A在书房", "角色A 思考"]
+results, metrics = rag.retrieve(queries, chapter_id=1)
+
+for r in results:
+    print(f"[{r.score:.2f}] {r.content[:50]}...")
+    print(f"  角色: {r.metadata.characters}, 地点: {r.metadata.location}")
+
+print(f"查询耗时: {metrics.query_time_ms}ms")
+```
+
+### 3. 查询生成（Generate Queries）
+
+**自动生成检索查询**：
+```python
+queries = rag.generate_queries(
+    current_node={"type": "dialogue"},
+    character_profile={"name": "角色A", "role": "主角"},
+    scene_context="角色A在书房思考下一步行动"
+)
+
+# 返回: ["角色A在书房思考下一步行动 角色A", "角色A dialogue", "角色A在书房思考下一步行动"]
+```
+
+**查询类型**：
+1. **语义查询**：场景上下文 + 角色名
+2. **关键词查询**：角色名 + 单元类型
+3. **上下文查询**：原始场景描述
+
+## 便捷函数
+
+### 获取系统实例
+```python
+from rag_memory import get_rag_memory_system
+
+rag = get_rag_memory_system()
+```
+
+### 添加已分块文本
+```python
+from rag_memory import add_chunks
+
+result = add_chunks(
+    chunks=["块1", "块2"],
+    metadata={"chapter_id": 1, "node_id": "node_1"}
+)
+# 返回: {"index_status": True, "chunk_count": 2}
+```
+
+### 简单搜索
+```python
+from rag_memory import search
+
+results = search("角色A在书房", chapter_id=1, top_k=3)
+for r in results:
+    print(f"{r.score}: {r.content}")
+```
+
+## 使用场景
+
+### 场景1：角色扮演时检索记忆
+```python
+# 1. 生成检索查询
+queries = rag.generate_queries(
+    current_node=node_info,
+    character_profile=character_profile,
+    scene_context=scene_description
+)
+
+# 2. 检索相关记忆
+results, metrics = rag.retrieve(queries, chapter_id=current_chapter)
+
+# 3. 构建记忆上下文
+memory_context = "\n".join([r.content for r in results[:3]])
+
+# 4. 传递给 LLM
+messages = [
+    {"role": "system", "content": f"相关记忆:\n{memory_context}"},
+    {"role": "user", "content": generation_prompt}
+]
+```
+
+### 场景2：章节完成后批量索引
+```python
+# 遍历章节所有节点
+for node in chapter_nodes:
+    rag.ingest(
+        content=node["generated_content"],
+        chapter_id=chapter_id,
+        node_id=node["id"],
+        unit_type=node["type"],
+        characters=node["characters"],
+        location=node.get("location", ""),
+        emotions=node.get("emotions", [])
+    )
+```
+
+### 场景3：查看向量库统计
+```python
+stats = rag.get_stats()
+print(f"总块数: {stats['total_chunks']}")
+print(f"存储目录: {stats['persist_directory']}")
+```
+
+## 文件存储
+
+**向量库文件**：`./vector_store/index.json`
+
+**结构**：
+```json
+{
+  "chunks": ["文本块1", "文本块2"],
+  "embeddings": [[0.1, 0.2, ...], [0.3, 0.4, ...]],
+  "metadatas": [
+    {
+      "chapter_id": 1,
+      "node_id": "node_1",
+      "unit_type": "narrator",
+      "characters": ["角色A"],
+      "timestamp": "2026-01-15 10:30:00"
+    }
+  ]
+}
+```
+
+## 边界与约束
+- **本地存储**：向量库保存在本地 JSON 文件，非生产级方案
+- **内存加载**：所有数据加载到内存，大数据量时需注意
+- **相似度阈值**：默认 0.5，低于此值的结果被过滤
+- **分块策略**：按字符数分割，智能断句
+- **无增量更新**：相同内容重复摄入会产生重复数据
+
+## 性能优化建议
+- 定期清理旧数据避免内存溢出
+- 对频繁查询的章节使用 filter_metadata 过滤
+- 调整 chunk_size 和 chunk_overlap 平衡检索精度
+- 使用 batch 接口批量处理嵌入请求
+
+## 验证清单
+- [ ] embedding 配置正确（base_url, api_key, model）
+- [ ] vector_store 目录可写
+- [ ] 摄入的内容正确分块
+- [ ] 元数据包含必要的上下文信息
+- [ ] 检索结果按相似度正确排序
+- [ ] 相似度阈值设置合理
+- [ ] 定期备份 vector_store/index.json
