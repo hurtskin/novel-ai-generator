@@ -200,7 +200,12 @@ class MemoryStore(ABC):
     def clear_character_memory(self, character_name: str) -> None:
         """清空角色记忆"""
         pass
-    
+
+    @abstractmethod
+    def clear(self) -> None:
+        """清空所有记忆数据"""
+        pass
+
     @abstractmethod
     def get_all_characters(self) -> List[str]:
         """获取所有角色名称列表"""

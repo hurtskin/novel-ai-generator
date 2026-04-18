@@ -18,6 +18,15 @@ from interfaces import (
     ConfigProvider,
     StorageBackend,
 )
+from services.interfaces import (
+    VersionSelectorService,
+    NodeRetryService,
+    NodeRegenerateService,
+    PerformanceMetricsService,
+    ConfigManagerService,
+    DebugLogService,
+    NovelGeneratorService,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -110,6 +119,97 @@ def get_storage_backend(container: Container = Depends(get_container)) -> Storag
         StorageBackend: 存储后端实例
     """
     return container.resolve(StorageBackend)
+
+
+def get_version_selector_service(container: Container = Depends(get_container)) -> VersionSelectorService:
+    """
+    获取版本选择服务
+    
+    Args:
+        container: 依赖注入容器
+        
+    Returns:
+        VersionSelectorService: 版本选择服务实例
+    """
+    return container.resolve(VersionSelectorService)
+
+
+def get_node_retry_service(container: Container = Depends(get_container)) -> NodeRetryService:
+    """
+    获取节点重试服务
+    
+    Args:
+        container: 依赖注入容器
+        
+    Returns:
+        NodeRetryService: 节点重试服务实例
+    """
+    return container.resolve(NodeRetryService)
+
+
+def get_node_regenerate_service(container: Container = Depends(get_container)) -> NodeRegenerateService:
+    """
+    获取节点再生服务
+    
+    Args:
+        container: 依赖注入容器
+        
+    Returns:
+        NodeRegenerateService: 节点再生服务实例
+    """
+    return container.resolve(NodeRegenerateService)
+
+
+def get_performance_metrics_service(container: Container = Depends(get_container)) -> PerformanceMetricsService:
+    """
+    获取性能指标服务
+    
+    Args:
+        container: 依赖注入容器
+        
+    Returns:
+        PerformanceMetricsService: 性能指标服务实例
+    """
+    return container.resolve(PerformanceMetricsService)
+
+
+def get_config_manager_service(container: Container = Depends(get_container)) -> ConfigManagerService:
+    """
+    获取配置管理服务
+    
+    Args:
+        container: 依赖注入容器
+        
+    Returns:
+        ConfigManagerService: 配置管理服务实例
+    """
+    return container.resolve(ConfigManagerService)
+
+
+def get_debug_log_service(container: Container = Depends(get_container)) -> DebugLogService:
+    """
+    获取调试日志服务
+    
+    Args:
+        container: 依赖注入容器
+        
+    Returns:
+        DebugLogService: 调试日志服务实例
+    """
+    return container.resolve(DebugLogService)
+
+
+def get_novel_generator_service(container: Container = Depends(get_container)) -> NovelGeneratorService:
+    """
+    获取小说生成服务
+    
+    Args:
+        container: 依赖注入容器
+        
+    Returns:
+        NovelGeneratorService: 小说生成服务实例
+    """
+    return container.resolve(NovelGeneratorService)
 
 
 async def verify_token(

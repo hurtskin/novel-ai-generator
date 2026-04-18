@@ -105,7 +105,7 @@ def create_app() -> FastAPI:
 
 def _register_routes(app: FastAPI) -> None:
     """注册所有路由模块"""
-    from api.routes import generation, websocket, snapshots
+    from api.routes import generation, websocket, snapshots, versions
     
     # 生成相关路由
     app.include_router(
@@ -126,6 +126,13 @@ def _register_routes(app: FastAPI) -> None:
         snapshots.router,
         prefix="/api",
         tags=["snapshots"],
+    )
+    
+    # 版本管理路由
+    app.include_router(
+        versions.router,
+        prefix="/api",
+        tags=["versions"],
     )
     
     logger.info("Routes registered successfully")

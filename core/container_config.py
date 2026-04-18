@@ -10,11 +10,25 @@ from typing import Optional
 from core.container import Container, Scope
 from interfaces import (
     LLMClient,
+    LLMClientFactory,
     MemoryStore,
     ObservabilityBackend,
     ConfigProvider,
     StorageBackend,
 )
+from services.interfaces import (
+    VersionSelectorService,
+    NodeRetryService,
+    NodeRegenerateService,
+    PerformanceMetricsService,
+    ConfigManagerService,
+    DebugLogService,
+    WebSocketBroadcastService,
+    FileOutputService,
+    RAGRetrievalService,
+    NovelGeneratorService,
+)
+from services.novel_generator import NovelGenerator
 
 # 实现类导入
 from implementations.llm.moonshot_client import MoonshotClient
@@ -22,6 +36,18 @@ from implementations.memory.simple_memory_store import SimpleMemoryStore
 from implementations.observability.file_backend import FileObservabilityBackend
 from implementations.config.yaml_config import YamlConfigProvider
 from implementations.storage.json_storage import JsonStorageBackend
+from implementations.llm.factory import LLMClientFactoryImpl
+from services.version_selector import VersionSelector
+from services.node_retry import NodeRetryManager
+from services.node_regenerate import NodeRegenerateManager
+from services.performance_metrics import PerformanceMetricsCollector
+from services.config_manager import ConfigManager
+from services.debug_log import DebugLogManager
+from services.websocket_broadcast import WebSocketBroadcastManager
+from services.file_output import FileOutputManager
+from services.rag_retrieval import RAGRetrievalManager
+
+
 
 logger = logging.getLogger(__name__)
 
@@ -73,13 +99,22 @@ def initialize_container(
         # 2. 注册 LLMClient (Singleton)
         # MoonshotClient 是线程安全的，且 API 密钥和配置在应用生命周期内不变，使用单例
         container.register(
-            LLMClient,
-            MoonshotClient,
+            LLMClientFactory,
+            LLMClientFactoryImpl,
             scope=Scope.SINGLETON
         )
-        logger.info("Registered LLMClient -> MoonshotClient (Singleton)")
+        logger.info("Registered LLMClientFactory -> LLMClientFactoryImpl (Singleton)")
+
+        # 3. 注册 LLMClient (Singleton)
+        # 使用工厂根据配置创建对应的客户端
+        container.register_factory(
+            LLMClient,
+            lambda c: c.resolve(LLMClientFactory).get_default_client(),
+            scope=Scope.SINGLETON
+        )
+        logger.info("Registered LLMClient (Singleton)")
         
-        # 3. 注册 MemoryStore (Transient)
+        # 4. 注册 MemoryStore (Transient)
         # SimpleMemoryStore 是有状态的（存储特定章节的记忆），每次请求需要新实例
         container.register(
             MemoryStore,
@@ -88,7 +123,7 @@ def initialize_container(
         )
         logger.info("Registered MemoryStore -> SimpleMemoryStore (Transient)")
         
-        # 4. 注册 ObservabilityBackend (Singleton)
+        # 5. 注册 ObservabilityBackend (Singleton)
         # FileObservabilityBackend 使用单例模式管理文件资源和 WebSocket 连接
         container.register(
             ObservabilityBackend,
@@ -97,7 +132,7 @@ def initialize_container(
         )
         logger.info("Registered ObservabilityBackend -> FileObservabilityBackend (Singleton)")
         
-        # 5. 注册 StorageBackend (Singleton)
+        # 6. 注册 StorageBackend (Singleton)
         # JsonStorageBackend 线程安全，且需要维护文件索引，使用单例
         container.register(
             StorageBackend,
@@ -106,6 +141,103 @@ def initialize_container(
         )
         logger.info("Registered StorageBackend -> JsonStorageBackend (Singleton)")
         
+        # 7. 注册 VersionSelectorService (Singleton)
+        # VersionSelector 需要维护全局版本状态，使用单例
+        container.register(
+            VersionSelectorService,
+            VersionSelector,
+            scope=Scope.SINGLETON
+        )
+        logger.info("Registered VersionSelectorService -> VersionSelector (Singleton)")
+        
+        # 8. 注册 NodeRetryService (Singleton)
+        # NodeRetryManager 需要维护全局重试状态，使用单例
+        container.register(
+            NodeRetryService,
+            NodeRetryManager,
+            scope=Scope.SINGLETON
+        )
+        logger.info("Registered NodeRetryService -> NodeRetryManager (Singleton)")
+        
+        # 9. 注册 NodeRegenerateService (Singleton)
+        # NodeRegenerateManager 需要维护全局再生状态，使用单例
+        container.register(
+            NodeRegenerateService,
+            NodeRegenerateManager,
+            scope=Scope.SINGLETON
+        )
+        logger.info("Registered NodeRegenerateService -> NodeRegenerateManager (Singleton)")
+        
+        # 10. 注册 PerformanceMetricsService (Singleton)
+        # PerformanceMetricsCollector 需要访问全局可观测性数据，使用单例
+        container.register(
+            PerformanceMetricsService,
+            PerformanceMetricsCollector,
+            scope=Scope.SINGLETON
+        )
+        logger.info("Registered PerformanceMetricsService -> PerformanceMetricsCollector (Singleton)")
+        
+        # 11. 注册 ConfigManagerService (Singleton)
+        # ConfigManager 管理全局配置，使用单例
+        container.register(
+            ConfigManagerService,
+            ConfigManager,
+            scope=Scope.SINGLETON
+        )
+        logger.info("Registered ConfigManagerService -> ConfigManager (Singleton)")
+        
+        # 12. 注册 DebugLogService (Singleton)
+        # DebugLogManager 管理调试日志，使用单例
+        container.register(
+            DebugLogService,
+            DebugLogManager,
+            scope=Scope.SINGLETON
+        )
+        logger.info("Registered DebugLogService -> DebugLogManager (Singleton)")
+        
+        # 13. 注册 WebSocketBroadcastService (Singleton)
+        # WebSocketBroadcastManager 管理 WebSocket 连接，使用单例模式
+        container.register(
+            WebSocketBroadcastService,
+            WebSocketBroadcastManager,
+            scope=Scope.SINGLETON
+        )
+        logger.info("Registered WebSocketBroadcastService -> WebSocketBroadcastServiceImpl (Singleton)")
+
+        # 14. 注册 FileOutputService (Singleton)
+        # FileOutputManager 管理文件输出，使用单例模式
+        container.register(
+            FileOutputService,
+            FileOutputManager,
+            scope=Scope.SINGLETON
+        )
+        logger.info("Registered FileOutputService -> FileOutputServiceImpl (Singleton)")
+        
+        # 15. 注册 RAGRetrievalService (Singleton)
+        # RAGRetrievalManager 管理 RAG 检索，使用单例模式
+        container.register_factory(
+            RAGRetrievalService,
+            lambda c: RAGRetrievalManager(memory_store=c.resolve(MemoryStore)),
+            scope=Scope.SINGLETON
+        )
+        logger.info("Registered RAGRetrievalService -> RAGRetrievalManager (Singleton)")
+        
+        # 16. 注册 NovelGeneratorService (Singleton)
+        # NovelGeneratorServiceImpl 管理小说生成，使用单例模式
+        container.register_factory(
+            NovelGeneratorService,
+            lambda c: NovelGenerator(
+                llm_client=c.resolve(LLMClient),
+                memory_store=c.resolve(MemoryStore),
+                observability=c.resolve(ObservabilityBackend),
+                config_provider=c.resolve(ConfigProvider),
+                websocket_service=c.resolve(WebSocketBroadcastService),
+                file_output_service=c.resolve(FileOutputService),
+                rag_service=c.resolve(RAGRetrievalService),
+            ),
+            scope=Scope.SINGLETON
+        )
+
         logger.info("Container initialization completed successfully")
         return container
         
@@ -174,6 +306,47 @@ def initialize_container_with_rag(
             scope=Scope.SINGLETON
         )
         logger.info("Registered StorageBackend -> JsonStorageBackend (Singleton)")
+        
+        # 注册 VersionSelectorService (Singleton)
+        container.register(
+            VersionSelectorService,
+            VersionSelector,
+            scope=Scope.SINGLETON
+        )
+        logger.info("Registered VersionSelectorService -> VersionSelector (Singleton)")
+        
+        # 注册 NodeRetryService (Singleton)
+        container.register(
+            NodeRetryService,
+            NodeRetryManager,
+            scope=Scope.SINGLETON
+        )
+        logger.info("Registered NodeRetryService -> NodeRetryManager (Singleton)")
+        
+        # 注册 NodeRegenerateService (Singleton)
+        container.register(
+            NodeRegenerateService,
+            NodeRegenerateManager,
+            scope=Scope.SINGLETON
+        )
+        logger.info("Registered NodeRegenerateService -> NodeRegenerateManager (Singleton)")
+        
+        # 注册 PerformanceMetricsService (Singleton)
+        container.register(
+            PerformanceMetricsService,
+            PerformanceMetricsCollector,
+            scope=Scope.SINGLETON
+        )
+        logger.info("Registered PerformanceMetricsService -> PerformanceMetricsCollector (Singleton)")
+
+        # 注册 RAGRetrievalService (Singleton)
+        # RAGRetrievalManager 管理 RAG 检索，使用单例模式
+        container.register_factory(
+            RAGRetrievalService,
+            lambda c: RAGRetrievalManager(memory_store=c.resolve(MemoryStore)),
+            scope=Scope.SINGLETON
+        )
+        logger.info("Registered RAGRetrievalService -> RAGRetrievalManager (Singleton)")
         
         logger.info("Container initialization with RAG completed successfully")
         return container

@@ -33,7 +33,7 @@ class DirectorGeneralInput(BaseModel):
 class DirectorChapterInput(BaseModel):
     """章节导演节点输入"""
     chapter_id: int
-    director_general_output: DirectorGeneralOutput
+    director_general_output: "DirectorGeneralOutput"
     genre: str
     feedback: Optional[str] = None
     user_theme: str = ""
@@ -74,3 +74,8 @@ class RoleAssignerInput(BaseModel):
 class TextPolisherInput(BaseModel):
     """文本润色节点输入"""
     chapter_text: str = Field(description="当前章节的文本内容，需要润色的原始文本")
+
+
+# 在文件末尾添加，用于重建模型以解析前向引用
+from schemas.outputs import DirectorGeneralOutput
+DirectorChapterInput.model_rebuild()

@@ -271,10 +271,36 @@
   "node_id": "node_1"
 }
 ```
+- **请求参数验证**:
+  - `chapter_id`: 必须 >= 1
+  - `node_id`: 必须为非空字符串
 - **响应**:
 ```json
 {"status": "regenerating", "chapter_id": 1, "node_id": "node_1"}
 ```
+- **错误响应**:
+  - `400`: 无法再生指定节点（业务逻辑限制）
+  - `422`: 请求参数验证失败（chapter_id < 1 或 node_id 为空）
+  - `500`: 服务器内部错误
+
+### 重试节点
+- **端点**: `POST /api/retry_node`
+- **描述**: 重试当前失败的节点生成
+- **请求体**: 无（使用当前章节和节点）
+- **响应**:
+```json
+{
+  "status": "success",
+  "message": "Retry attempt 1 initiated for node role_actor_1",
+  "chapter_id": 1,
+  "node_id": "role_actor_1",
+  "retry_count": 1,
+  "can_retry": true
+}
+```
+- **错误响应**:
+  - `400`: 没有正在运行的生成任务或没有活动节点
+  - `500`: 服务器内部错误
 
 ### 获取快照列表
 - **端点**: `GET /api/snapshots`
@@ -310,12 +336,38 @@
 
 ### 性能指标
 - **端点**: `GET /api/performance`
-- **描述**: 获取性能指标汇总
+- **描述**: 获取性能指标汇总，包括节点级、章节级和总体指标
 - **响应**:
 ```json
 {
-  "per_node": [...],
-  "per_chapter": [...],
+  "per_node": [
+    {
+      "node_id": "role_actor_1",
+      "chapter": 1,
+      "model": "kimi-k2.5",
+      "prompt_tokens": 1000,
+      "completion_tokens": 500,
+      "total_tokens": 1500,
+      "ttf_ms": 500,
+      "tps": 50.0,
+      "duration_ms": 10000,
+      "api_latency_ms": 600,
+      "retry_count": 0,
+      "cost_usd": 0.015,
+      "timestamp": "2026-04-16T12:00:00"
+    }
+  ],
+  "per_chapter": [
+    {
+      "chapter_id": 1,
+      "total_nodes": 7,
+      "total_duration_ms": 70000,
+      "total_tokens": 10500,
+      "total_retries": 0,
+      "total_cost_usd": 0.105,
+      "avg_tps": 50.0
+    }
+  ],
   "summary": {
     "total_chapters": 3,
     "total_duration_min": 5.2,
@@ -325,6 +377,8 @@
   }
 }
 ```
+- **错误响应**:
+  - `500`: 服务器内部错误（获取性能指标失败）
 
 ### 配置信息
 - **端点**: `GET /api/config`
@@ -367,15 +421,60 @@
   },
   "generation": {
     "temperature": 0.8
+  },
+  "memory": {
+    "truncation": 8000
+  },
+  "ui": {
+    "theme": "light"
+  },
+  "performance": {
+    "cost_alert_usd": 10
   }
 }
 ```
 - **响应**:
 ```json
 {
-  "status": "saved"
+  "status": "saved",
+  "message": "Configuration saved successfully",
+  "updated_keys": ["api.model", "generation.temperature"]
 }
 ```
+- **错误响应**:
+  - `400`: 配置无效（如 temperature 超出范围）
+  - `500`: 服务器内部错误（保存失败）
+
+### 调试日志操作
+- **端点**: `POST /api/debuglog`
+- **描述**: 执行调试日志相关操作（获取内容、清除、写入、设置调试模式）
+- **请求体**:
+```json
+{
+  "action": "get",
+  "message": "自定义日志消息",
+  "level": "INFO",
+  "enabled": true
+}
+```
+- **操作类型说明**:
+  - `get`: 获取调试日志内容
+  - `clear`: 清空调试日志
+  - `write`: 写入调试日志（需要提供 message 和可选的 level）
+  - `set_mode`: 设置调试模式（需要提供 enabled）
+- **响应**:
+```json
+{
+  "status": "success",
+  "message": "Debug log read successfully",
+  "content": "日志内容...",
+  "exists": true,
+  "debug_mode": true
+}
+```
+- **错误响应**:
+  - `400`: 请求参数无效
+  - `500`: 服务器内部错误
 
 ## WebSocket API
 

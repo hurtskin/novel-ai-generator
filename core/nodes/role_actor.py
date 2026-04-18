@@ -4,6 +4,7 @@
 负责根据角色分配器的输出生成具体的角色扮演内容
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -311,7 +312,12 @@ def role_actor(
             content = f"[第{chapter_id}章 - {node_id}] 【根据审查反馈修改】{feedback} 节点类型: {node_type}"
         if stream_callback:
             for char in content:
-                stream_callback(char)
+                if asyncio.iscoroutinefunction(stream_callback):
+                    # 如果是异步函数，创建新任务执行
+                    asyncio.create_task(stream_callback(char))
+                else:
+                    # 如果是同步函数，直接调用
+                    stream_callback(char)
         return {
             "generated_content": content,
             "state_change_report": {

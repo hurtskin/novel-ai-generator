@@ -8,70 +8,70 @@ import logging
 from typing import Any, Dict
 
 from utils import json_output, validate_schema
-from schemas import DirectorGeneralInput, DirectorGeneralOutput
+from schemas import DirectorGeneralInput, DirectorGeneralOutput, CharacterCard, GenreSpecific
 
 logger = logging.getLogger(__name__)
 
-# Mock 数据
-MOCK_DIRECTOR_GENERAL = {
-    "world_building": "22世纪末，人类发明了曲速引擎，实现了星际旅行",
-    "writing_style": "科幻现实主义，第三人称全知，中速节奏，文学性语言",
-    "outline": [
+# Mock 数据（DirectorGeneralOutput 对象）
+MOCK_DIRECTOR_GENERAL = DirectorGeneralOutput(
+    world_building="22世纪末，人类发明了曲速引擎，实现了星际旅行",
+    writing_style="科幻现实主义，第三人称全知，中速节奏，文学性语言",
+    outline=[
         "第一章：启程 - 星际飞船启航，船员准备离开地球",
         "第二章：危机 - 遭遇未知威胁，能源危机出现",
         "第三章：抵达 - 发现新星球，建立殖民地"
     ],
-    "chapter_count": 3,
-    "characters": [
+    chapter_count=3,
+    characters=[
         "李明：舰长，退役军人，果敢的性格，目标找到新家园",
         "艾琳：科学家，物理学家，理性思维，目标研究新科技"
     ],
-    "character_names": ["李明", "艾琳"],
-    "character_cards": [
-        {
-            "name": "李明",
-            "role": "舰长",
-            "background": "退役军人",
-            "personality": "果敢、坚毅、有责任心",
-            "goals": "找到新家园，保护船员安全",
-            "relationships": {"艾琳": "同事"},
-            "speaking_style": "简洁有力",
-            "habits": ["每天检查飞船设备", "记录航行日志"],
-            "strengths": ["领导力", "决策果断"],
-            "weaknesses": ["有时过于冒险"],
-            "fears": ["失去船员"],
-            "secrets": ["隐瞒了过去的失败"]
-        },
-        {
-            "name": "艾琳",
-            "role": "科学家",
-            "background": "物理学家",
-            "personality": "理性、好奇、冷静",
-            "goals": "研究新科技，解开宇宙奥秘",
-            "relationships": {"李明": "同事"},
-            "speaking_style": "专业术语多",
-            "habits": ["做实验记录", "思考问题"],
-            "strengths": ["专业知识", "分析能力"],
-            "weaknesses": ["不擅长社交"],
-            "fears": ["实验失败"],
-            "secrets": ["偷偷进行私人研究"]
-        }
+    character_names=["李明", "艾琳"],
+    character_cards=[
+        CharacterCard(
+            name="李明",
+            role="舰长",
+            background="退役军人",
+            personality="果敢、坚毅、有责任心",
+            goals="找到新家园，保护船员安全",
+            relationships={"艾琳": "同事"},
+            speaking_style="简洁有力",
+            habits=["每天检查飞船设备", "记录航行日志"],
+            strengths=["领导力", "决策果断"],
+            weaknesses=["有时过于冒险"],
+            fears=["失去船员"],
+            secrets=["隐瞒了过去的失败"]
+        ),
+        CharacterCard(
+            name="艾琳",
+            role="科学家",
+            background="物理学家",
+            personality="理性、好奇、冷静",
+            goals="研究新科技，解开宇宙奥秘",
+            relationships={"李明": "同事"},
+            speaking_style="专业术语多",
+            habits=["做实验记录", "思考问题"],
+            strengths=["专业知识", "分析能力"],
+            weaknesses=["不擅长社交"],
+            fears=["实验失败"],
+            secrets=["偷偷进行私人研究"]
+        )
     ],
-    "conflict_design": "寻找新家园与未知威胁的对立，能源短缺，船员矛盾，整个人类的未来",
-    "foreshadowing": [
+    conflict_design="寻找新家园与未知威胁的对立，能源短缺，船员矛盾，整个人类的未来",
+    foreshadowing=[
         "能源危机的伏笔在第一章埋下",
         "外来信号的来源在第二章揭示"
     ],
-    "character_arcs": [
+    character_arcs=[
         "李明：从保守到冒险精神的转变",
         "艾琳：从理性到接受不确定性的转变"
     ],
-    "tone": "宏大而温情，充满希望",
-    "genre_specific": {
-        "genre": "novel",
-        "specific_fields": {"硬科幻": "强调技术细节"}
-    }
-}
+    tone="宏大而温情，充满希望",
+    genre_specific=GenreSpecific(
+        genre="novel",
+        specific_fields={"硬科幻": "强调技术细节"}
+    )
+)
 
 
 @json_output

@@ -2,22 +2,20 @@ api:
   api_key: sk-Em9oXoGGhW7g2S3ibD3k0qhSpVtcz2aRnfbR5BLhwY75BwzH
   base_url: https://api.moonshot.cn/v1
   max_retries: 5
-  model: moonshot-v1-128k
+  model: kimi-k2
   provider: ollama
   timeout: 180
-
 embedding:
   api_key: sk-f3jcsqke5tgqp5jk
   base_url: https://cloud.infini-ai.com/maas
-  model: bge-m3
-  dimensions: 1024
   batch_size: 32
-
+  dimensions: 1024
+  model: bge-m3
 generation:
   debug: true
   max_tokens: 8192
-  mock_mode: false
-  temperature: 1
+  mock_mode: true
+  temperature: 0.8
   top_p: 0.95
 genre: novel
 memory:

@@ -120,7 +120,9 @@ class FileObservabilityBackend(ObservabilityBackend):
             message: 日志消息
         """
         timestamp = datetime.now().isoformat()
-        log_line = f"[{timestamp}] [{level.value}] [C{chapter}/N{node}] {message}\n"
+        # 支持 LogLevel 枚举或字符串
+        level_str = level.value if hasattr(level, 'value') else str(level)
+        log_line = f"[{timestamp}] [{level_str}] [C{chapter}/N{node}] {message}\n"
         self._log_file_handle.write(log_line)
         self._log_file_handle.flush()
 

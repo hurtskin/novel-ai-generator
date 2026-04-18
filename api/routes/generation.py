@@ -17,10 +17,23 @@ from api.dependencies import (
     get_llm_client,
     get_config_provider,
     get_generation_state,
+    get_node_retry_service,
+    get_node_regenerate_service,
+    get_performance_metrics_service,
+    get_config_manager_service,
+    get_debug_log_service,
     require_generation_not_running,
     GenerationState,
 )
 from interfaces import LLMClient, ConfigProvider
+from services.interfaces import (
+    NodeRetryService, NodeRetryError,
+    NodeRegenerateService, NodeRegenerateError,
+    PerformanceMetricsService, PerformanceMetricsError,
+    ConfigManagerService, ConfigManagerError,
+    DebugLogService, DebugLogError,
+    NovelGeneratorService,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -194,8 +207,6 @@ async def start_generation(
         task_id,
         request,
         state,
-        llm_client,
-        config_provider,
     )
     
     logger.info(f"Generation task {task_id} started")
@@ -339,67 +350,352 @@ async def list_tasks(
     ]
 
 
+class NodeRetryResponse(BaseModel):
+    """
+    节点重试响应模型
+    
+    Attributes:
+        status: 操作状态
+        message: 状态消息
+        chapter_id: 章节ID
+        node_id: 节点ID
+        retry_count: 当前重试次数
+        can_retry: 是否还可以继续重试
+    """
+    status: str = Field(..., description="操作状态")
+    message: str = Field(..., description="状态消息")
+    chapter_id: int = Field(..., description="章节ID")
+    node_id: str = Field(..., description="节点ID")
+    retry_count: int = Field(..., description="当前重试次数")
+    can_retry: bool = Field(..., description="是否还可以继续重试")
+
+
+@router.post(
+    "/retry_node",
+    response_model=NodeRetryResponse,
+    status_code=status.HTTP_200_OK,
+    summary="重试当前节点",
+    description="重试当前失败的节点生成",
+)
+async def retry_node(
+    state: GenerationState = Depends(get_generation_state),
+    retry_service: NodeRetryService = Depends(get_node_retry_service),
+) -> NodeRetryResponse:
+    """
+    重试当前节点
+    
+    用于在节点生成失败后进行重试。
+    会自动增加重试计数，并检查是否超过最大重试次数。
+    
+    Note:
+        - 需要当前有正在运行的生成任务
+        - 会自动使用当前章节和节点ID
+    """
+    # 验证是否有正在运行的任务
+    if not state.is_running:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No generation task is running",
+        )
+    
+    # 验证当前章节和节点
+    if state.current_chapter < 0 or not state.current_node:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No active node to retry",
+        )
+    
+    chapter_id = state.current_chapter
+    node_id = state.current_node
+    
+    try:
+        # 执行重试
+        result = await retry_service.retry_node(chapter_id, node_id)
+        
+        # 检查是否还可以继续重试
+        can_retry = retry_service.can_retry(chapter_id, node_id, max_retries=3)
+        
+        logger.info(
+            f"Node retry: chapter={chapter_id}, node={node_id}, "
+            f"retry_count={result.retry_count}"
+        )
+        
+        return NodeRetryResponse(
+            status="success" if result.success else "failed",
+            message=result.message,
+            chapter_id=chapter_id,
+            node_id=node_id,
+            retry_count=result.retry_count,
+            can_retry=can_retry,
+        )
+        
+    except NodeRetryError as e:
+        logger.error(f"Node retry error: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+    except Exception as e:
+        logger.error(f"Unexpected error in retry_node: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to retry node: {str(e)}",
+        )
+
+
+class RegenerateRequest(BaseModel):
+    """
+    节点再生请求模型
+    
+    Attributes:
+        chapter_id: 章节ID
+        node_id: 节点ID
+    """
+    chapter_id: int = Field(..., description="章节ID", ge=1)
+    node_id: str = Field(..., description="节点ID", min_length=1)
+
+
+class RegenerateResponse(BaseModel):
+    """
+    节点再生响应模型
+    
+    Attributes:
+        status: 操作状态
+        chapter_id: 章节ID
+        node_id: 节点ID
+    """
+    status: str = Field(..., description="操作状态")
+    chapter_id: int = Field(..., description="章节ID")
+    node_id: str = Field(..., description="节点ID")
+
+
+@router.post(
+    "/regenerate",
+    response_model=RegenerateResponse,
+    status_code=status.HTTP_200_OK,
+    summary="重新生成节点",
+    description="指定章节和节点重新生成",
+)
+async def regenerate_node(
+    request: RegenerateRequest,
+    regenerate_service: NodeRegenerateService = Depends(get_node_regenerate_service),
+) -> RegenerateResponse:
+    """
+    重新生成节点
+    
+    用于指定章节和节点进行内容重新生成。
+    
+    Args:
+        request: 再生请求，包含 chapter_id 和 node_id
+        regenerate_service: 节点再生服务
+        
+    Returns:
+        RegenerateResponse: 再生响应
+        
+    Raises:
+        HTTPException: 400 - 参数无效或无法再生
+        HTTPException: 500 - 服务器内部错误
+    """
+    chapter_id = request.chapter_id
+    node_id = request.node_id
+    
+    try:
+        # 检查是否可以再生
+        if not regenerate_service.can_regenerate(chapter_id, node_id):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Cannot regenerate node {node_id} in chapter {chapter_id}",
+            )
+        
+        # 执行再生
+        result = await regenerate_service.regenerate_node(chapter_id, node_id)
+        
+        logger.info(
+            f"Node regeneration: chapter={chapter_id}, node={node_id}, "
+            f"status={result.status}"
+        )
+        
+        return RegenerateResponse(
+            status=result.status,
+            chapter_id=chapter_id,
+            node_id=node_id,
+        )
+        
+    except NodeRegenerateError as e:
+        logger.error(f"Node regenerate error: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error in regenerate_node: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to regenerate node: {str(e)}",
+        )
+
+
+class PerformanceResponse(BaseModel):
+    """
+    性能指标响应模型
+    
+    Attributes:
+        per_node: 节点级性能指标列表
+        per_chapter: 章节级性能指标列表
+        summary: 总体性能指标汇总
+    """
+    per_node: List[Dict[str, Any]] = Field(default_factory=list, description="节点级性能指标")
+    per_chapter: List[Dict[str, Any]] = Field(default_factory=list, description="章节级性能指标")
+    summary: Dict[str, Any] = Field(default_factory=dict, description="总体性能指标汇总")
+
+
+@router.get(
+    "/performance",
+    response_model=PerformanceResponse,
+    status_code=status.HTTP_200_OK,
+    summary="获取性能指标",
+    description="获取性能指标汇总，包括节点级、章节级和总体指标",
+)
+async def get_performance(
+    metrics_service: PerformanceMetricsService = Depends(get_performance_metrics_service),
+) -> PerformanceResponse:
+    """
+    获取性能指标汇总
+    
+    返回三级性能指标：
+    - per_node: 每个 LLM 节点的详细指标
+    - per_chapter: 每个章节的汇总指标
+    - summary: 总体汇总指标
+    
+    Args:
+        metrics_service: 性能指标服务
+        
+    Returns:
+        PerformanceResponse: 性能指标响应
+        
+    Raises:
+        HTTPException: 500 - 服务器内部错误
+    """
+    try:
+        # 获取性能指标
+        metrics = metrics_service.get_performance_metrics()
+        
+        # 转换汇总数据为字典
+        summary_dict = {
+            "total_chapters": metrics.summary.total_chapters,
+            "total_duration_min": metrics.summary.total_duration_min,
+            "total_tokens": metrics.summary.total_tokens,
+            "total_cost_usd": metrics.summary.total_cost_usd,
+            "avg_chapter_time_min": metrics.summary.avg_chapter_time_min,
+        }
+        
+        logger.info(
+            f"Performance metrics retrieved: "
+            f"nodes={len(metrics.per_node)}, chapters={len(metrics.per_chapter)}"
+        )
+        
+        return PerformanceResponse(
+            per_node=metrics.per_node,
+            per_chapter=metrics.per_chapter,
+            summary=summary_dict,
+        )
+        
+    except PerformanceMetricsError as e:
+        logger.error(f"Performance metrics error: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e),
+        )
+    except Exception as e:
+        logger.error(f"Unexpected error in get_performance: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get performance metrics: {str(e)}",
+        )
+
+
 async def _run_generation_task(
     task_id: str,
     request: GenerationRequest,
     state: GenerationState,
-    llm_client: LLMClient,
-    config_provider: ConfigProvider,
 ) -> None:
     """
     运行生成任务（后台任务）
+    
+    调用 NovelGenerator 服务执行实际的小说生成流程，包括：
+    - Director General: 生成总体大纲
+    - Director Chapter: 生成章节计划
+    - Role Assigner/Actor: 角色分配和演绎
+    - Self Check: 内容自检
+    - Text Polisher: 文本润色
+    - Memory Summarizer: 记忆总结
     
     Args:
         task_id: 任务 ID
         request: 生成请求
         state: 生成状态
-        llm_client: LLM 客户端
-        config_provider: 配置提供者
     """
+    from core.container_config import initialize_container
+    from services.interfaces import GenerationRequest as NovelGenerationRequest, NovelStyle
+    
     try:
         _tasks[task_id]["status"] = "running"
         
-        # 模拟生成过程（实际实现应该调用核心生成逻辑）
-        # TODO: 集成实际的生成流程
-        
         logger.info(f"Task {task_id} running with theme: {request.theme[:50]}...")
         
-        # 模拟章节生成
-        total_chapters = 3  # 实际应该从 director_general 获取
-        state.total_chapters = total_chapters
+        # 初始化依赖注入容器
+        container = initialize_container()
         
-        chapters = []
-        for i in range(1, total_chapters + 1):
-            if state.is_stopped:
-                break
-            
-            while state.is_paused:
-                await asyncio.sleep(0.5)
-            
-            state.current_chapter = i
-            state.current_node = f"CHAPTER_{i}"
-            state.progress = (i / total_chapters) * 100
-            
-            # 模拟生成延迟
-            await asyncio.sleep(1)
-            
-            chapters.append(ChapterResult(
-                chapter_number=i,
-                title=f"Chapter {i}",
-                content=f"Content for chapter {i}...",
-                word_count=1000,
-            ))
+        # 获取小说生成服务
+        novel_generator = container.resolve(NovelGeneratorService)
+        
+        # 构建生成请求
+        # 注意：request.style 和 request.genre 可能是字符串或枚举值
+        style_value = request.style.value if hasattr(request.style, 'value') else request.style
+        genre_value = request.genre.value if hasattr(request.genre, 'value') else request.genre
+        
+        gen_request = NovelGenerationRequest(
+            theme=request.theme,
+            style=NovelStyle(style_value),
+            total_words=request.total_words,
+            character_count=request.character_count,
+            genre=genre_value,
+            temperature=request.temperature,
+            max_tokens=request.max_tokens,
+        )
+        
+        # 更新状态
+        state.is_running = True
+        state.is_stopped = False
+        state.is_paused = False
+        
+        # 执行生成
+        result = await novel_generator.generate(gen_request)
+        
+        # 转换结果为 API 格式
+        chapters = [
+            ChapterResult(
+                chapter_number=c.chapter_number,
+                title=c.title,
+                content=c.content,
+                word_count=c.word_count,
+            )
+            for c in result.chapters
+        ]
         
         # 完成任务
         _tasks[task_id]["status"] = "completed" if not state.is_stopped else "stopped"
         _tasks[task_id]["completed_at"] = datetime.now().isoformat()
         _tasks[task_id]["result"] = {
             "chapters": [c.model_dump() for c in chapters],
-            "total_word_count": sum(c.word_count for c in chapters),
+            "total_word_count": result.total_word_count,
         }
         
         state.is_running = False
-        logger.info(f"Task {task_id} completed")
+        state.progress = 100.0
+        logger.info(f"Task {task_id} completed with {result.total_word_count} words")
         
     except Exception as e:
         logger.error(f"Task {task_id} failed: {e}", exc_info=True)
@@ -407,3 +703,323 @@ async def _run_generation_task(
         _tasks[task_id]["error"] = str(e)
         state.error = str(e)
         state.is_running = False
+
+
+class ConfigSaveRequest(BaseModel):
+    """
+    配置保存请求模型
+    
+    Attributes:
+        api: API 配置（可选）
+        generation: 生成配置（可选）
+        memory: 记忆配置（可选）
+        ui: UI 配置（可选）
+        performance: 性能配置（可选）
+    """
+    api: Optional[Dict[str, Any]] = Field(None, description="API 配置")
+    generation: Optional[Dict[str, Any]] = Field(None, description="生成配置")
+    memory: Optional[Dict[str, Any]] = Field(None, description="记忆配置")
+    ui: Optional[Dict[str, Any]] = Field(None, description="UI 配置")
+    performance: Optional[Dict[str, Any]] = Field(None, description="性能配置")
+
+
+class ConfigSaveResponse(BaseModel):
+    """
+    配置保存响应模型
+    
+    Attributes:
+        status: 操作状态
+        message: 状态消息
+        updated_keys: 更新的键列表
+    """
+    status: str = Field(..., description="操作状态")
+    message: str = Field(..., description="状态消息")
+    updated_keys: List[str] = Field(default_factory=list, description="更新的键列表")
+
+class ConfigGetResponse(BaseModel):
+    """
+    配置获取响应模型
+    
+    Attributes:
+        api: API 配置
+        generation: 生成配置
+        memory: 记忆配置
+        ui: UI 配置
+        performance: 性能配置
+    """
+    api: Dict[str, Any] = Field(default_factory=dict, description="API 配置")
+    generation: Dict[str, Any] = Field(default_factory=dict, description="生成配置")
+    memory: Dict[str, Any] = Field(default_factory=dict, description="记忆配置")
+    ui: Dict[str, Any] = Field(default_factory=dict, description="UI 配置")
+    performance: Dict[str, Any] = Field(default_factory=dict, description="性能配置")
+
+@router.get(
+    "/config",
+    response_model=ConfigGetResponse,
+    status_code=status.HTTP_200_OK,
+    summary="获取配置",
+    description="获取当前配置信息（动态从 config.yaml 读取）",
+)
+async def get_config(
+    config_provider: ConfigProvider = Depends(get_config_provider),
+) -> ConfigGetResponse:
+    """
+    获取配置信息
+    
+    动态从 config.yaml 读取最新配置，确保返回的是当前生效的配置。
+    
+    Args:
+        config_provider: 配置提供者
+        
+    Returns:
+        ConfigGetResponse: 配置信息响应
+        
+    Raises:
+        HTTPException: 500 - 服务器内部错误
+    """
+    try:
+        # 获取所有配置
+        config = config_provider.get_all()
+        
+        logger.debug("Config retrieved successfully")
+        
+        return ConfigGetResponse(
+            api=config.get("api", {}),
+            generation=config.get("generation", {}),
+            memory=config.get("memory", {}),
+            ui=config.get("ui", {}),
+            performance=config.get("performance", {}),
+        )
+        
+    except Exception as e:
+        logger.error(f"Failed to get config: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get configuration: {str(e)}",
+        )
+        
+@router.post(
+    "/config",
+    response_model=ConfigSaveResponse,
+    status_code=status.HTTP_200_OK,
+    summary="保存配置",
+    description="保存配置到 config.yaml 并重新加载（动态生效，无需重启）",
+)
+async def save_config(
+    request: ConfigSaveRequest,
+    config_manager: ConfigManagerService = Depends(get_config_manager_service),
+) -> ConfigSaveResponse:
+    """
+    保存配置
+    
+    支持部分配置更新，只更新提供的字段。
+    配置保存后会自动重新加载，无需重启服务。
+    
+    Args:
+        request: 配置保存请求
+        config_manager: 配置管理服务
+        
+    Returns:
+        ConfigSaveResponse: 配置保存响应
+        
+    Raises:
+        HTTPException: 400 - 配置无效
+        HTTPException: 500 - 服务器内部错误
+    """
+    try:
+        # 构建配置更新字典
+        config_updates = {}
+        
+        if request.api is not None:
+            config_updates["api"] = request.api
+        if request.generation is not None:
+            config_updates["generation"] = request.generation
+        if request.memory is not None:
+            config_updates["memory"] = request.memory
+        if request.ui is not None:
+            config_updates["ui"] = request.ui
+        if request.performance is not None:
+            config_updates["performance"] = request.performance
+        
+        # 检查是否有配置更新
+        if not config_updates:
+            return ConfigSaveResponse(
+                status="saved",
+                message="No configuration changes provided",
+                updated_keys=[],
+            )
+        
+        # 保存配置
+        result = await config_manager.save_config(config_updates)
+        
+        logger.info(
+            f"Config saved successfully: updated {len(result.updated_keys)} keys"
+        )
+        
+        return ConfigSaveResponse(
+            status=result.status,
+            message=result.message,
+            updated_keys=result.updated_keys,
+        )
+        
+    except ConfigManagerError as e:
+        logger.error(f"Config save error: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+    except Exception as e:
+        logger.error(f"Unexpected error in save_config: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to save configuration: {str(e)}",
+        )
+
+
+class DebugLogAction(str, Enum):
+    """调试日志操作类型枚举"""
+    GET = "get"
+    CLEAR = "clear"
+    WRITE = "write"
+    SET_MODE = "set_mode"
+
+
+class DebugLogRequest(BaseModel):
+    """
+    调试日志请求模型
+    
+    Attributes:
+        action: 操作类型（get/clear/write/set_mode）
+        message: 日志消息（write 操作时必需）
+        level: 日志级别（write 操作时可选，默认为 INFO）
+        enabled: 是否启用调试模式（set_mode 操作时必需）
+    """
+    action: DebugLogAction = Field(..., description="操作类型")
+    message: Optional[str] = Field(None, description="日志消息（write 操作时必需）")
+    level: Optional[str] = Field("INFO", description="日志级别（write 操作时可选）")
+    enabled: Optional[bool] = Field(None, description="是否启用调试模式（set_mode 操作时必需）")
+
+
+class DebugLogResponse(BaseModel):
+    """
+    调试日志响应模型
+    
+    Attributes:
+        status: 操作状态
+        message: 状态消息
+        content: 日志内容（get 操作时返回）
+        exists: 日志文件是否存在
+        debug_mode: 当前调试模式状态（set_mode 操作时返回）
+    """
+    status: str = Field(..., description="操作状态")
+    message: str = Field(..., description="状态消息")
+    content: Optional[str] = Field(None, description="日志内容")
+    exists: bool = Field(False, description="日志文件是否存在")
+    debug_mode: Optional[bool] = Field(None, description="调试模式状态")
+
+
+@router.post(
+    "/debuglog",
+    response_model=DebugLogResponse,
+    status_code=status.HTTP_200_OK,
+    summary="调试日志操作",
+    description="执行调试日志相关操作：获取内容、清除、写入、设置调试模式",
+)
+async def debug_log(
+    request: DebugLogRequest,
+    debug_log_service: DebugLogService = Depends(get_debug_log_service),
+) -> DebugLogResponse:
+    """
+    调试日志操作
+    
+    支持以下操作：
+    - get: 获取调试日志内容
+    - clear: 清空调试日志
+    - write: 写入调试日志（需要提供 message 和可选的 level）
+    - set_mode: 设置调试模式（需要提供 enabled）
+    
+    Args:
+        request: 调试日志请求
+        debug_log_service: 调试日志服务
+        
+    Returns:
+        DebugLogResponse: 调试日志响应
+        
+    Raises:
+        HTTPException: 400 - 请求参数无效
+        HTTPException: 500 - 服务器内部错误
+    """
+    try:
+        if request.action == DebugLogAction.GET:
+            # 获取调试日志内容
+            result = debug_log_service.get_debug_log()
+            return DebugLogResponse(
+                status=result.status,
+                message=result.message,
+                content=result.content,
+                exists=result.exists,
+            )
+            
+        elif request.action == DebugLogAction.CLEAR:
+            # 清空调试日志
+            result = debug_log_service.clear_debug_log()
+            return DebugLogResponse(
+                status=result.status,
+                message=result.message,
+                exists=result.exists,
+            )
+            
+        elif request.action == DebugLogAction.WRITE:
+            # 写入调试日志
+            if not request.message:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Message is required for write action",
+                )
+            result = debug_log_service.write_debug_log(
+                message=request.message,
+                level=request.level or "INFO",
+            )
+            return DebugLogResponse(
+                status=result.status,
+                message=result.message,
+                exists=result.exists,
+            )
+            
+        elif request.action == DebugLogAction.SET_MODE:
+            # 设置调试模式
+            if request.enabled is None:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Enabled is required for set_mode action",
+                )
+            result = debug_log_service.set_debug_mode(enabled=request.enabled)
+            debug_mode = debug_log_service.get_debug_mode()
+            return DebugLogResponse(
+                status=result.status,
+                message=result.message,
+                exists=result.exists,
+                debug_mode=debug_mode,
+            )
+            
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Unknown action: {request.action}",
+            )
+            
+    except HTTPException:
+        # 重新抛出 HTTPException（如 400 错误）
+        raise
+    except DebugLogError as e:
+        logger.error(f"Debug log error: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e),
+        )
+    except Exception as e:
+        logger.error(f"Unexpected error in debug_log: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to perform debug log operation: {str(e)}",
+        )

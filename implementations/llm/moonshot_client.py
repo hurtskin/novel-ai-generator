@@ -86,6 +86,15 @@ class MoonshotClient(LLMClient):
             self.model, {"input_per_million": 12, "output_per_million": 60}
         )
 
+    @staticmethod
+    def _get_msg_attr(msg, attr):
+        """获取消息属性（支持对象或字典）"""
+        if hasattr(msg, attr):
+            return getattr(msg, attr)
+        elif isinstance(msg, dict):
+            return msg.get(attr)
+        return None
+
     def get_model(self) -> str:
         """获取当前使用的模型名称"""
         return self.model
@@ -167,9 +176,17 @@ class MoonshotClient(LLMClient):
         )
 
         generation_config = self._config.get("generation", {})
+        # 支持消息对象或字典
+        def get_msg_attr(msg, attr):
+            if hasattr(msg, attr):
+                return getattr(msg, attr)
+            elif isinstance(msg, dict):
+                return msg.get(attr)
+            return None
+        
         body = {
             "model": model,
-            "messages": [{"role": msg.role, "content": msg.content} for msg in messages],
+            "messages": [{"role": get_msg_attr(msg, "role"), "content": get_msg_attr(msg, "content")} for msg in messages],
             "stream": True,
             "temperature": temperature
             if temperature is not None
@@ -285,7 +302,7 @@ class MoonshotClient(LLMClient):
         self._log_response(full_content)
 
         prompt_tokens = self.estimate_tokens(
-            json.dumps([{"role": msg.role, "content": msg.content} for msg in messages])
+            json.dumps([{"role": self._get_msg_attr(msg, "role"), "content": self._get_msg_attr(msg, "content")} for msg in messages])
         )
         completion_tokens = self.estimate_tokens(full_content)
         total_tokens = prompt_tokens + completion_tokens
@@ -350,7 +367,7 @@ class MoonshotClient(LLMClient):
         generation_config = self._config.get("generation", {})
         body = {
             "model": model,
-            "messages": [{"role": msg.role, "content": msg.content} for msg in messages],
+            "messages": [{"role": self._get_msg_attr(msg, "role"), "content": self._get_msg_attr(msg, "content")} for msg in messages],
             "stream": True,
             "temperature": temperature
             if temperature is not None
@@ -432,7 +449,7 @@ class MoonshotClient(LLMClient):
             )
 
         prompt_tokens = self.estimate_tokens(
-            json.dumps([{"role": msg.role, "content": msg.content} for msg in messages])
+            json.dumps([{"role": self._get_msg_attr(msg, "role"), "content": self._get_msg_attr(msg, "content")} for msg in messages])
         )
         completion_tokens = self.estimate_tokens(full_content)
         total_tokens = prompt_tokens + completion_tokens
@@ -469,8 +486,15 @@ class MoonshotClient(LLMClient):
         os.makedirs(os.path.dirname(debug_log_path), exist_ok=True)
         with open(debug_log_path, "a", encoding="utf-8") as f:
             f.write(f"[LLM_API] REQUEST: model={model}, endpoint={endpoint}\n")
+            # 支持消息对象或字典
+            def get_msg_attr(msg, attr):
+                if hasattr(msg, attr):
+                    return getattr(msg, attr)
+                elif isinstance(msg, dict):
+                    return msg.get(attr)
+                return None
             f.write(
-                f"[LLM_API] messages={json.dumps([{'role': msg.role, 'content': msg.content} for msg in messages], ensure_ascii=False, indent=2)}\n"
+                f"[LLM_API] messages={json.dumps([{'role': get_msg_attr(msg, 'role'), 'content': get_msg_attr(msg, 'content')} for msg in messages], ensure_ascii=False, indent=2)}\n"
             )
             f.write(f"[LLM_API] body={json.dumps(body, ensure_ascii=False, indent=2)}\n")
 

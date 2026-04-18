@@ -68,6 +68,15 @@ class OllamaClient(LLMClient):
         self.model = self._ollama_config.get("model", "llama3")
         self.timeout = self._ollama_config.get("timeout", 300)
 
+    @staticmethod
+    def _get_msg_attr(msg, attr):
+        """获取消息属性（支持对象或字典）"""
+        if hasattr(msg, attr):
+            return getattr(msg, attr)
+        elif isinstance(msg, dict):
+            return msg.get(attr)
+        return None
+
     def get_model(self) -> str:
         """获取当前使用的模型名称"""
         return self.model
@@ -131,7 +140,7 @@ class OllamaClient(LLMClient):
         generation_config = self._config.get("generation", {})
         body = {
             "model": model,
-            "messages": [{"role": msg.role, "content": msg.content} for msg in messages],
+            "messages": [{"role": self._get_msg_attr(msg, "role"), "content": self._get_msg_attr(msg, "content")} for msg in messages],
             "stream": True,
             "options": {
                 "temperature": temperature
@@ -194,7 +203,7 @@ class OllamaClient(LLMClient):
         self._log_response(full_content)
 
         prompt_tokens = self.estimate_tokens(
-            json.dumps([{"role": msg.role, "content": msg.content} for msg in messages])
+            json.dumps([{"role": self._get_msg_attr(msg, "role"), "content": self._get_msg_attr(msg, "content")} for msg in messages])
         )
         completion_tokens = self.estimate_tokens(full_content)
         total_tokens = prompt_tokens + completion_tokens
@@ -251,7 +260,7 @@ class OllamaClient(LLMClient):
         generation_config = self._config.get("generation", {})
         body = {
             "model": model,
-            "messages": [{"role": msg.role, "content": msg.content} for msg in messages],
+            "messages": [{"role": self._get_msg_attr(msg, "role"), "content": self._get_msg_attr(msg, "content")} for msg in messages],
             "stream": True,
             "options": {
                 "temperature": temperature
@@ -329,7 +338,7 @@ class OllamaClient(LLMClient):
             )
 
         prompt_tokens = self.estimate_tokens(
-            json.dumps([{"role": msg.role, "content": msg.content} for msg in messages])
+            json.dumps([{"role": self._get_msg_attr(msg, "role"), "content": self._get_msg_attr(msg, "content")} for msg in messages])
         )
         completion_tokens = self.estimate_tokens(full_content)
         total_tokens = prompt_tokens + completion_tokens
@@ -365,7 +374,7 @@ class OllamaClient(LLMClient):
         with open(debug_log_path, "a", encoding="utf-8") as f:
             f.write(f"[OLLAMA] REQUEST: model={model}, endpoint={endpoint}\n")
             f.write(
-                f"[OLLAMA] messages={json.dumps([{'role': msg.role, 'content': msg.content} for msg in messages], ensure_ascii=False, indent=2)}\n"
+                f"[OLLAMA] messages={json.dumps([{'role': self._get_msg_attr(msg, 'role'), 'content': self._get_msg_attr(msg, 'content')} for msg in messages], ensure_ascii=False, indent=2)}\n"
             )
             f.write(f"[OLLAMA] body={json.dumps(body, ensure_ascii=False, indent=2)}\n")
 

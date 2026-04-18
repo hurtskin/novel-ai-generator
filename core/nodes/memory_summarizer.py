@@ -45,7 +45,13 @@ def memory_summarizer(
         max_tokens=4096
     )
     
-    content = result.get("content", "[]")
+    # 兼容 ChatResponse 对象和字典两种格式
+    if hasattr(result, 'content'):
+        content = result.content
+    elif isinstance(result, dict):
+        content = result.get("content", "[]")
+    else:
+        content = "[]"
     
     try:
         cards = json.loads(content)

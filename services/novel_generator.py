@@ -5,11 +5,13 @@
 """
 
 import asyncio
+import json
 import logging
 import uuid
 from typing import Any, Dict, List, Optional
 
 from interfaces import LLMClient, MemoryStore, ObservabilityBackend, ConfigProvider
+from interfaces.memory import MemoryUpdate
 from core.iterators.chapter_iterator import ChapterIterator
 from core.nodes.director_general import director_general
 from core.nodes.director_chapter import director_chapter
@@ -17,6 +19,8 @@ from core.nodes.role_assigner import role_assigner
 from core.nodes.role_actor import role_actor
 from core.nodes.self_check import self_check
 from core.nodes.memory_summarizer import memory_summarizer
+from core.nodes.text_polisher import text_polisher
+
 from schemas import (
     DirectorGeneralInput,
     DirectorGeneralOutput,
@@ -25,6 +29,9 @@ from schemas import (
     RoleAssignerInput,
     RoleAssignerOutput,
     RoleActorOutput,
+    CurrentNodeInfo,
+    CharacterProfileData,
+    RawMemory,
 )
 
 from services.interfaces import (
@@ -35,6 +42,9 @@ from services.interfaces import (
     GenerationStatus,
     ChapterResult,
     GenerationError,
+    WebSocketBroadcastService,
+    FileOutputService,
+    RAGRetrievalService
 )
 
 logger = logging.getLogger(__name__)
@@ -67,6 +77,9 @@ class NovelGenerator(NovelGeneratorService):
         memory_store: MemoryStore,
         observability: ObservabilityBackend,
         config_provider: ConfigProvider,
+        websocket_service: WebSocketBroadcastService,
+        file_output_service: FileOutputService,
+        rag_service: RAGRetrievalService,
     ):
         """
         初始化小说生成服务
@@ -81,6 +94,9 @@ class NovelGenerator(NovelGeneratorService):
         self.memory_store = memory_store
         self.observability = observability
         self.config_provider = config_provider
+        self.file_output = file_output_service
+        self.rag = rag_service
+        self.websocket = websocket_service
         
         self._current_task_id: Optional[str] = None
         self._is_running: bool = False
@@ -91,6 +107,18 @@ class NovelGenerator(NovelGeneratorService):
         self._current_node: str = ""
         
         logger.info("NovelGenerator initialized")
+
+        if self.rag:
+            try:
+                asyncio.create_task(self.rag.clear())
+                logger.info("RAG store clear initiated for new generation")
+            except Exception as e:
+                logger.warning(f"Failed to initiate RAG clear: {e}")
+        
+        generation_config = self.config_provider.get_generation_config()
+        self._mock_mode = generation_config.mock_mode 
+        self.max_retries = getattr(generation_config, 'max_retries', 3)
+        self.window_size = getattr(generation_config, 'window_size', 5)
     
     def validate_request(self, request: GenerationRequest) -> bool:
         """
@@ -241,7 +269,11 @@ class NovelGenerator(NovelGeneratorService):
         logger.debug(f"Running DIRECTOR_GENERAL with theme: {request.theme[:50]}...")
         
         # 在后台线程运行同步函数
-        result = await asyncio.to_thread(director_general, input_data)
+        result = await asyncio.to_thread(director_general, input_data, llm_client=self.llm_client, mock_mode=self._mock_mode)
+        
+        # 如果结果是字典，转换为 DirectorGeneralOutput 对象
+        if isinstance(result, dict):
+            result = DirectorGeneralOutput(**result)
         
         logger.info(f"DIRECTOR_GENERAL completed: {result.chapter_count} chapters planned")
         return result
@@ -271,44 +303,58 @@ class NovelGenerator(NovelGeneratorService):
         Raises:
             GenerationError: 生成失败时
         """
+        from core.iterators.node_sequence import NodeSequence
+        from core.context.chapter_context import ChapterContext
         plan = context.get("plan")
         request = context.get("request")
         
         try:
-            # 步骤 1: Director Chapter
-            self._current_node = "DIRECTOR_CHAPTER"
-            chapter_plan = await self._run_director_chapter(chapter_number, plan)
-            
-            # 步骤 2: Role Assigner
-            self._current_node = "ROLE_ASSIGNER"
-            role_tasks = await self._run_role_assigner(chapter_number, chapter_plan)
-            
-            # 步骤 3: Role Actor
-            self._current_node = "ROLE_ACTOR"
-            chapter_content = await self._run_role_actor(chapter_number, role_tasks)
-            
-            # 步骤 4: Self Check
-            self._current_node = "SELF_CHECK"
-            check_result = await self._run_self_check(chapter_number, chapter_content)
-            
-            # 步骤 5: Memory Summarizer
-            self._current_node = "MEMORY_SUMMARIZER"
-            await self._run_memory_summarizer(chapter_number, chapter_content)
-            
-            # 计算字数
-            word_count = len(chapter_content.replace(" ", "").replace("\n", ""))
-            
-            return ChapterResult(
-                chapter_number=chapter_number,
-                title=chapter_plan.title if hasattr(chapter_plan, "title") else f"Chapter {chapter_number}",
-                content=chapter_content,
-                word_count=word_count,
-                node_results={
-                    "director_chapter": chapter_plan,
-                    "role_assigner": role_tasks,
-                    "self_check": check_result,
-                }
-            )
+            # 使用 ChapterContext 管理章节上下文
+            with ChapterContext(
+                chapter_id=chapter_number,
+                config_path="config.yaml",
+                memory_path="global_memory.json",
+                base_dir=f"./temp/{self._current_task_id}"
+            ) as ctx:
+                # 步骤 1: Director Chapter
+                self._current_node = "DIRECTOR_CHAPTER"
+                chapter_plan = await self._run_director_chapter(chapter_number, plan)
+                
+                # 步骤 2-4: 使用 NodeSequence 迭代执行节点序列
+                self._current_node = "NODE_SEQUENCE"
+                chapter_content = await self._execute_node_sequence(
+                    chapter_number=chapter_number,
+                    chapter_plan=chapter_plan,
+                    context=context,
+                    ctx=ctx,
+                )
+                # 步骤 5: Text Polisher
+                self._current_node = "TEXT_POLISHER"
+                polished_content = await self._run_text_polisher(chapter_content)
+                            # 保存润色后的章节
+                if self.file_output:
+                    await self.file_output.save_polished_chapter(
+                        chapter_number=chapter_number,
+                        content=polished_content,
+                        original_file_path=f"./output/{self._current_task_id}.txt",
+                    )
+
+                # 步骤 6: Memory Summarizer
+                self._current_node = "MEMORY_SUMMARIZER"
+                await self._run_memory_summarizer(chapter_number, polished_content, context)
+                
+                # 计算字数
+                word_count = len(chapter_content.replace(" ", "").replace("\n", ""))
+                
+                return ChapterResult(
+                    chapter_number=chapter_number,
+                    title=chapter_plan.title if hasattr(chapter_plan, "title") else f"Chapter {chapter_number}",
+                    content=polished_content,
+                    word_count=word_count,
+                    node_results={
+                        "director_chapter": chapter_plan,
+                    }
+                )
             
         except Exception as e:
             logger.error(f"Chapter {chapter_number} generation failed: {e}")
@@ -321,61 +367,542 @@ class NovelGenerator(NovelGeneratorService):
     ) -> DirectorChapterOutput:
         """运行 Director Chapter 节点"""
         input_data = DirectorChapterInput(
-            chapter_number=chapter_number,
-            global_outline=plan.outline if hasattr(plan, "outline") else "",
-            characters=plan.character_cards if hasattr(plan, "character_cards") else [],
+            chapter_id=chapter_number,
+            director_general_output=plan,
+            genre=plan.genre_specific.genre if hasattr(plan, "genre_specific") else "novel",
         )
         
-        result = await asyncio.to_thread(director_chapter, input_data)
+        result = await asyncio.to_thread(director_chapter, input_data, llm_client=self.llm_client, mock_mode=self._mock_mode)
         logger.debug(f"DIRECTOR_CHAPTER completed for chapter {chapter_number}")
         return result
     
     async def _run_role_assigner(
         self,
         chapter_number: int,
-        chapter_plan: DirectorChapterOutput,
+        node: Dict[str, Any],
+        context: Dict[str, Any],
     ) -> RoleAssignerOutput:
-        """运行 Role Assigner 节点"""
-        input_data = RoleAssignerInput(
-            chapter_outline=chapter_plan.outline if hasattr(chapter_plan, "outline") else "",
-            characters=chapter_plan.characters if hasattr(chapter_plan, "characters") else [],
+        """
+        运行 Role Assigner 节点
+
+        根据节点定义和上下文，调用 role_assigner 节点生成分配的角色任务。
+        遵循面向接口原则，通过依赖注入使用 llm_client。
+
+        Args:
+            chapter_number: 章节号
+            node: 节点定义字典，包含 node_id, type, description, target_character 等
+            context: 生成上下文，包含 plan, request 等信息
+
+        Returns:
+            RoleAssignerOutput: 角色分配器输出
+        """
+        plan = context.get("plan")
+        request = context.get("request")
+
+        # 从 plan 中获取角色卡片
+        character_cards = plan.character_cards if hasattr(plan, "character_cards") else []
+        character_names = plan.character_names if hasattr(plan, "character_names") else []
+
+        # 获取目标角色
+        target_character = node.get("target_character", "")
+        if not target_character and character_cards:
+            target_character = character_cards[0].name if character_cards else"主角"
+
+        # 查找目标角色的详细档案
+        character_profile = None
+        for card in character_cards:
+            if isinstance(card, dict) and card.get("name") == target_character:
+                character_profile = CharacterProfileData(
+                    name=card.get("name", target_character),
+                    role=card.get("role", ""),
+                    background=card.get("background", ""),
+                    personality=card.get("personality", ""),
+                    goals=card.get("goals", ""),
+                    relationships=card.get("relationships", {}),
+                )
+                break
+
+        # 如果找不到角色档案，使用默认值
+        if not character_profile:
+            character_profile = CharacterProfileData(
+                name=target_character,
+                role="主角",
+                background="",
+                personality="",
+                goals="",
+                relationships={},
+            )
+
+        # 构建当前节点信息
+        current_node = CurrentNodeInfo(
+            node_id=node.get("node_id", 0),
+            type=node.get("type", "dialogue"),
+            description=node.get("description", ""),
+            target_character=target_character,
         )
-        
-        result = await asyncio.to_thread(role_assigner, input_data)
-        logger.debug(f"ROLE_ASSIGNER completed for chapter {chapter_number}")
+
+        # 构建输入数据
+        input_data = RoleAssignerInput(
+            current_node=current_node,
+            character_profile=character_profile,
+            genre=request.genre if request else "novel",
+            current_situation=node.get("description", ""),
+            goals=node.get("goals", "完成当前场景内容"),
+            constraints=node.get("constraints", []),
+            user_theme=request.theme if request else "",
+            user_style=request.style.value if request else "",
+            user_total_words=request.total_words if request else 0,
+            user_character_count=request.character_count if request else 0,
+            character_names=character_names,
+            character_cards=[card.model_dump() if hasattr(card, "model_dump") else card for card in character_cards],
+            feedback=node.get("feedback", ""),
+            generated_summaries=[],  # 可以从 memory_store 获取
+        )
+
+        # 调用 role_assigner 节点（在后台线程运行同步函数）
+        result = await asyncio.to_thread(
+            role_assigner,
+            input_data=input_data,
+            llm_client=self.llm_client,
+            mock_mode=self._mock_mode,
+        )
+
+        logger.debug(f"ROLE_ASSIGNER completed for chapter {chapter_number}, node {current_node.node_id}")
         return result
     
     async def _run_role_actor(
         self,
         chapter_number: int,
-        role_tasks: RoleAssignerOutput,
+        node_id: str,
+        node_type: str,
+        role_output: RoleAssignerOutput,
+        rag_context: List[str],
+        context: Dict[str, Any],
     ) -> str:
-        """运行 Role Actor 节点"""
-        # 简化实现：直接返回内容
-        # 实际应该根据角色任务调用 role_actor
-        content = f"Chapter {chapter_number} content generated by role actors."
-        logger.debug(f"ROLE_ACTOR completed for chapter {chapter_number}")
-        return content
+        """
+        运行 Role Actor 节点
+
+        根据角色分配器的输出，调用 role_actor 节点生成具体的角色扮演内容。
+        遵循面向接口原则，通过依赖注入使用 llm_client。
+
+        Args:
+            chapter_number: 章节号
+            node_id: 节点ID
+            node_type: 节点类型 (dialogue/narrator/action/environment/psychology/conflict)
+            role_output: 角色分配器输出 (RoleAssignerOutput)
+            rag_context: RAG检索上下文列表
+            context: 生成上下文
+
+        Returns:
+            str: 生成的内容文本
+        """
+        request = context.get("request")
+
+        # 构建流式回调函数（如果 WebSocket 服务可用）
+        stream_callback = None
+        if self.websocket:
+            def _stream_callback(token: str) -> None:
+                # 使用 run_coroutine_threadsafe 在后台执行异步操作
+                try:
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        asyncio.run_coroutine_threadsafe(
+                            self.websocket.broadcast_token({
+                                "chapter": chapter_number,
+                                "node_id": node_id,
+                                "token": token,
+                            }),
+                            loop
+                        )
+                except RuntimeError:
+                    # 没有事件循环，忽略
+                    pass
+            stream_callback = _stream_callback
+
+        # 构建记忆更新回调
+        def _update_memory_callback(memory_update: Dict[str, Any]) -> None:
+            if self.memory_store:
+                try:
+                    self.memory_store.update_memory(memory_update)
+                except Exception as e:
+                    logger.warning(f"Memory update failed: {e}")
+
+        # 准备 role_output 的 generation_prompt，添加 RAG 上下文
+        if rag_context and role_output.generation_prompt:
+            # 将 RAG 上下文合并到 generation_prompt 的 rag_context 字段
+            rag_entries = [
+                {"source": f"rag_{i}", "score": 0.9, "content": ctx}
+                for i, ctx in enumerate(rag_context)
+            ]
+            # 使用 model_copy 创建副本并更新
+            updated_prompt = role_output.generation_prompt.model_copy(update={"rag_context": rag_entries})
+            role_output = role_output.model_copy(update={"generation_prompt": updated_prompt})
+
+        # 调用 role_actor 节点（在后台线程运行同步函数）
+        result = await asyncio.to_thread(
+            role_actor,
+            role_assigner_output=role_output,
+            chapter_id=chapter_number,
+            node_id=node_id,
+            node_type=node_type,
+            feedback=role_output.feedback if hasattr(role_output, "feedback") else "",
+            stream_callback=stream_callback,
+            update_memory_callback=_update_memory_callback,
+            user_theme=request.theme if request else "",
+            user_style=request.style.value if request else "",
+            user_total_words=request.total_words if request else 0,
+            user_character_count=request.character_count if request else 0,
+            llm_client=self.llm_client,
+            mock_mode=self._mock_mode,
+        )
+
+        # 提取生成的内容
+        generated_content = result.get("generated_content", "") if isinstance(result, dict) else ""
+        if not generated_content and hasattr(result, "generated_content"):
+            generated_content = result.generated_content
+
+        logger.debug(f"ROLE_ACTOR completed for chapter {chapter_number}, node {node_id}")
+        return generated_content
     
     async def _run_self_check(
         self,
-        chapter_number: int,
         content: str,
-    ) -> Any:
-        """运行 Self Check 节点"""
-        # 简化实现
-        logger.debug(f"SELF_CHECK completed for chapter {chapter_number}")
-        return {"passed": True}
+        window_content: str,
+        chapter_number: int,
+        node_id: str,
+        context: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """运行 Self Check 节点 - 支持滑动窗口"""
+        plan = context.get("plan")
+        
+        # 构建标准
+        standards = {
+            'outline': plan.outline if hasattr(plan, 'outline') else '',
+            'world_building': plan.world_building if hasattr(plan, 'world_building') else {},
+            'characters': plan.character_cards if hasattr(plan, 'character_cards') else [],
+        }
+        
+        # 使用滑动窗口内容作为当前章节内容
+        current_content = window_content + "\n\n" + content if window_content else content
+        
+        result = await asyncio.to_thread(
+            self_check,
+            director_general_standards=standards,
+            current_chapter_content=current_content,
+            summary=[],  # 可以从 memory_store 获取
+            previous_feedback="",
+            chapter_id=chapter_number,
+            node_id=node_id,
+            llm_client=self.llm_client,
+            mock_mode=self._mock_mode,
+        )
+        
+        logger.debug(f"SELF_CHECK completed for chapter {chapter_number}, node {node_id}")
+        
+        if isinstance(result, dict):
+            return result
+        elif hasattr(result, 'model_dump'):
+            return result.model_dump()
+        return {'needs_revision': False}
     
     async def _run_memory_summarizer(
         self,
         chapter_number: int,
         content: str,
+        context: Dict[str, Any],
     ) -> None:
-        """运行 Memory Summarizer 节点"""
-        # 简化实现
-        logger.debug(f"MEMORY_SUMMARIZER completed for chapter {chapter_number}")
+        """
+        运行 Memory Summarizer 节点
+
+        将章节内容压缩为结构化的记忆卡片，并存储到记忆存储中。
+        遵循面向接口原则，通过依赖注入使用 llm_client 和 memory_store。
+
+        Args:
+            chapter_number: 章节号
+            content: 章节内容文本
+            context: 生成上下文，包含 plan 等信息
+
+        Returns:
+            None: 记忆卡片直接存储到 memory_store
+        """
+        plan = context.get("plan")
+
+        # 获取角色名称列表
+        character_names = plan.character_names if hasattr(plan, "character_names") else []
+        if not character_names and hasattr(plan, "characters"):
+            character_names = plan.characters
+
+        # 如果没有角色信息，使用默认角色
+        if not character_names:
+            character_names = ["旁白"]
+
+        # 构建原始记忆片段
+        # 策略：将章节内容按段落分割，为每个主要角色创建记忆
+        raw_memories = []
+        paragraphs = [p.strip() for p in content.split("\n\n") if p.strip()]
+
+        for i, paragraph in enumerate(paragraphs[:10]):  # 限制最多10个记忆片段
+            # 检测段落中涉及的角色
+            mentioned_chars = [name for name in character_names if name in paragraph]
+            if not mentioned_chars:
+                mentioned_chars = ["旁白"]
+
+            for char in mentioned_chars[:2]:  # 每个段落最多关联2个角色
+                raw_memories.append(
+                    RawMemory(
+                        character=char,
+                        content=paragraph[:500],  # 限制内容长度
+                        emotion="neutral",  # 简化处理，实际可通过情感分析获取
+                    )
+                )
+
+        # 如果没有生成记忆，添加一个默认记忆
+        if not raw_memories:
+            raw_memories.append(
+                RawMemory(
+                    character=character_names[0] if character_names else "旁白",
+                    content=content[:500] if len(content) > 500 else content,
+                    emotion="neutral",
+                )
+            )
+
+        try:
+            # 调用 memory_summarizer 节点（在后台线程运行同步函数）
+            memory_cards = await asyncio.to_thread(
+                memory_summarizer,
+                raw_memories=raw_memories,
+                llm_client=self.llm_client,
+            )
+
+            # 将记忆卡片存储到 memory_store
+            if self.memory_store and memory_cards:
+                for card in memory_cards:
+                    if isinstance(card, dict):
+                        # 添加章节信息
+                        card["chapter_id"] = chapter_number
+                        card["source_chapter"] = chapter_number
+                        try:
+                            self.memory_store.update_memory(MemoryUpdate(
+                            chapter_id=chapter_number,
+                            node_id="memory_summarizer",
+                            target_character=card.get("character", "global"),
+                            new_memories=[json.dumps(card, ensure_ascii=False)],
+                            ))
+                        except Exception as e:
+                            logger.warning(f"Failed to store memory card: {e}")
+
+            logger.debug(f"MEMORY_SUMMARIZER completed for chapter {chapter_number}, generated {len(memory_cards)} cards")
+        except Exception as e:
+            logger.warning(f"Memory summarization failed for chapter {chapter_number}: {e}")
+            # 记忆总结失败不应中断整个生成流程
     
+
+    async def _execute_node_sequence(
+        self,
+        chapter_number: int,
+        chapter_plan: Any,
+        context: Dict[str, Any],
+        ctx: Any,  # ChapterContextData
+    ) -> str:
+        """
+        执行节点序列，使用 NodeSequence 进行迭代
+        
+        Args:
+            chapter_number: 章节号
+            chapter_plan: 章节规划（包含 node_sequence）
+            context: 生成上下文
+            ctx: 章节上下文数据
+            
+        Returns:
+            str: 拼接后的章节内容
+        """
+        from core.iterators.node_sequence import NodeSequence
+        
+        # 获取节点序列
+        node_sequence = chapter_plan.node_sequence if hasattr(chapter_plan, 'node_sequence') else []
+        if not node_sequence:
+            # 兼容旧版本：如果没有 node_sequence，使用默认单节点
+            node_sequence = [{'node_id': 0, 'type': 'dialogue', 'description': '默认节点'}]
+        
+        # 使用 NodeSequence 进行节点迭代
+        sequence = NodeSequence(node_sequence)
+        chapter_content = ""
+        window_contents = {}  # 滑动窗口内容存储
+        
+        for node in sequence:
+            if self._is_stopped:
+                break
+            
+            while self._is_paused:
+                await asyncio.sleep(0.5)
+            
+            node_id = node.get('node_id', f'node_{sequence.get_current_index()}')
+            self._current_node = node_id
+            
+            # WebSocket 广播进度
+            if self.websocket:
+                await self.websocket.broadcast_progress(
+                    current=chapter_number,
+                    total=self._total_chapters,
+                    percentage=(sequence.get_current_index() / len(node_sequence)) * 100,
+                    current_node=node_id,
+                )
+            
+            # 执行节点（带重试逻辑）
+            node_result = await self._execute_node_with_retry(
+                node=node,
+                sequence=sequence,
+                chapter_number=chapter_number,
+                context=context,
+                ctx=ctx,
+                window_contents=window_contents,
+            )
+            
+            if node_result['passed']:
+                # 保存到滑动窗口
+                window_contents[sequence.get_current_index() - 1] = node_result['content']
+                chapter_content += node_result['content'] + "\n\n"
+                
+                # 实时保存到文件
+                if self.file_output:
+                    await self.file_output.append_content(
+                        file_path=f"./output/{self._current_task_id}.txt",
+                        content=node_result['content'],
+                    )
+                if self.rag:
+                    try:
+                        await self.rag.add_document(
+                            content=node_result['content'],
+                            metadata={
+                                "chapter_id": chapter_number,
+                                "node_id": node_id,
+                                "type": node.get('type', 'dialogue'),
+                            }
+                        )
+                        logger.debug(f"Added node {node_id} content to RAG")
+                    except Exception as e:
+                        logger.warning(f"Failed to add content to RAG: {e}")
+                # 重置重试计数
+                sequence.retry_count = 0
+        
+        return chapter_content
+
+
+    async def _execute_node_with_retry(
+        self,
+        node: Dict[str, Any],
+        sequence: Any,  # NodeSequence
+        chapter_number: int,
+        context: Dict[str, Any],
+        ctx: Any,  # ChapterContextData
+        window_contents: Dict[int, str],
+    ) -> Dict[str, Any]:
+        """
+        执行单个节点，支持重试和滑动窗口审查
+        
+        Args:
+            node: 节点定义
+            sequence: NodeSequence 迭代器
+            chapter_number: 章节号
+            context: 生成上下文
+            ctx: 章节上下文数据
+            window_contents: 滑动窗口内容存储
+            
+        Returns:
+            Dict[str, Any]: {'passed': bool, 'content': str}
+        """
+        max_retries = self.max_retries
+        node_id = node.get('node_id', 'unknown')
+        
+        while True:
+            # 1. 角色分配
+            self._current_node = f"ROLE_ASSIGNER_{node_id}"
+            role_output = await self._run_role_assigner(chapter_number, node, context)
+            
+            # 2. RAG 检索（如果配置了 RAG 服务）
+            rag_context = []
+            if self.rag and hasattr(role_output, 'rag_queries') and role_output.rag_queries:
+                try:
+                    rag_results = await self.rag.search_multiple(role_output.rag_queries, top_k=3)
+                    rag_context = [r.content for results in rag_results for r in results]
+                except Exception as e:
+                    logger.warning(f"RAG search failed: {e}")
+            
+            # 3. 角色扮演生成
+            self._current_node = f"ROLE_ACTOR_{node_id}"
+            content = await self._run_role_actor(
+                chapter_number=chapter_number,
+                node_id=node_id,
+                node_type=node.get('type', 'dialogue'),
+                role_output=role_output,
+                rag_context=rag_context,
+                context=context,
+            )
+            
+            # 4. 滑动窗口自检
+            self._current_node = f"SELF_CHECK_{node_id}"
+            window_content = self._build_window_content(
+                current_idx=sequence.get_current_index() - 1,
+                window_contents=window_contents
+            )
+            check_result = await self._run_self_check(
+                content=content,
+                window_content=window_content,
+                chapter_number=chapter_number,
+                node_id=node_id,
+                context=context,
+            )
+            
+            # 检查是否通过
+            if not check_result.get('needs_revision', False):
+                return {'passed': True, 'content': content}
+            
+            # 需要修订，检查重试次数
+            if sequence.get_retry_count() >= max_retries:
+                logger.warning(f"Node {node_id} exceeded max retries ({max_retries}), triggering human intervention")
+                
+                # 触发人工干预
+                if self.websocket:
+                    await self.websocket.broadcast_intervention({
+                        'chapter': chapter_number,
+                        'node_id': node_id,
+                        'content': content,
+                        'suggestions': check_result.get('improvement_suggestions', ''),
+                        'retry_count': sequence.get_retry_count(),
+                    })
+                
+                # 简化处理：直接返回当前内容（实际应该等待人工决策）
+                # TODO: 实现人工干预等待机制
+                return {'passed': True, 'content': content}
+            
+            # 自动重试
+            logger.info(f"Node {node_id} needs revision, retrying ({sequence.get_retry_count() + 1}/{max_retries})")
+            sequence.send(check_result.get('improvement_suggestions', ''))
+    
+    async def _run_text_polisher(self, content: str) -> str:
+        """运行 Text Polisher 节点"""
+        from schemas import TextPolisherInput
+        
+        input_data = TextPolisherInput(chapter_text=content)
+        result = await asyncio.to_thread(text_polisher, input_data,llm_client=self.llm_client,mock_mode=self._mock_mode)
+        
+        logger.debug("TEXT_POLISHER completed")
+        
+        if isinstance(result, dict):
+            return result.get('polished_text', content)
+        elif hasattr(result, 'polished_text'):
+            return result.polished_text
+        return content
+
+    def _build_window_content(self, current_idx: int, window_contents: Dict[int, str]) -> str:
+        """构建滑动窗口内容"""
+        window_start = max(0, current_idx - self.window_size + 1)
+        contents = []
+        for idx in range(window_start, current_idx + 1):
+            if idx in window_contents:
+                contents.append(window_contents[idx])
+        return "\n\n".join(contents)
+
     def get_progress(self) -> GenerationProgress:
         """
         获取当前生成进度

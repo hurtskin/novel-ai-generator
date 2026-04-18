@@ -13,11 +13,77 @@ from schemas import DirectorChapterInput, DirectorChapterOutput
 logger = logging.getLogger(__name__)
 
 
+# 模拟数据：章节导演输出
+MOCK_DIRECTOR_CHAPTER = {
+    "chapter_outline": {
+        "chapter_id": 1,
+        "title": "初入修仙界",
+        "summary": "主角林风意外获得祖传玉佩中的修仙传承，从此踏上修仙之路。在初次修炼中，他感受到天地灵气的存在，并成功引气入体，正式成为炼气期修士。",
+        "key_events": ["发现玉佩秘密", "获得修仙传承", "初次引气入体", "成为炼气期修士"],
+        "characters_involved": ["林风"]
+    },
+    "node_sequence": [
+        {
+            "node_id": 1,
+            "type": "narrator",
+            "priority": 1,
+            "description": "林风在整理祖传遗物时，意外发现玉佩中隐藏的修仙功法",
+            "character": "旁白"
+        },
+        {
+            "node_id": 2,
+            "type": "environment",
+            "priority": 2,
+            "description": "古朴的房间里，阳光透过窗棂洒在陈旧的木桌上，玉佩在光芒中泛着温润的光泽",
+            "character": "环境"
+        },
+        {
+            "node_id": 3,
+            "type": "action",
+            "priority": 3,
+            "description": "林风颤抖着双手捧起玉佩，指尖轻轻抚过玉佩表面那些看似普通却暗藏玄机的纹路",
+            "character": "林风"
+        },
+        {
+            "node_id": 4,
+            "type": "psychology",
+            "priority": 4,
+            "description": "林风心中既惊又喜，脑海中闪过无数念头：这是传说中的修仙机缘吗？父母是否也是修仙者？",
+            "character": "林风"
+        },
+        {
+            "node_id": 5,
+            "type": "dialogue",
+            "priority": 5,
+            "description": "『原来如此...这就是修仙之道』林风喃喃自语，眼中闪烁着前所未有的光芒",
+            "character": "林风"
+        },
+        {
+            "node_id": 6,
+            "type": "conflict",
+            "priority": 6,
+            "description": "就在林风沉浸在获得传承的喜悦中时，窗外突然传来一阵异样的灵气波动，似乎有修士正在附近斗法",
+            "character": "旁白"
+        }
+    ],
+    "node_count": 6,
+    "character_presence_plan": {
+        "林风": [1, 2, 3, 4, 5, 6]
+    },
+    "genre_specific": {
+        "genre": "novel",
+        "cultivation_stage": "炼气期",
+        "realm": "凡人界"
+    }
+}
+
+
 @json_output
 @validate_schema(DirectorChapterOutput)
 def director_chapter(
     input_data: DirectorChapterInput,
-    llm_client: Any
+    llm_client: Any,
+    mock_mode: bool = False,
 ) -> Dict[str, Any]:
     """
     章节导演节点
@@ -31,6 +97,9 @@ def director_chapter(
     Returns:
         Dict[str, Any]: 包含章节大纲、节点序列、角色出场计划等的输出
     """
+    if mock_mode:
+        return MOCK_DIRECTOR_CHAPTER
+    
     director_general_output = input_data.director_general_output
     if hasattr(director_general_output, 'model_dump'):
         director_general_output = director_general_output.model_dump()

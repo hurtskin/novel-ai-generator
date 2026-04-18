@@ -206,6 +206,25 @@ class SimpleMemoryStore(MemoryStore):
                 self._save_global_memory()
                 logger.info(f"Cleared memory for character: {character_name}")
 
+    def clear(self) -> None:
+        """清空所有记忆数据"""
+        self._global_memory = {}
+        self._chapter_memories = {}
+        self._save_global_memory()
+        logger.info("All memories cleared")
+
+    def add_memory(self, content: str, metadata: Dict[str, Any]) -> None:
+        """添加记忆（兼容 RAG 接口）"""
+        # 使用 MemoryUpdate 对象而不是字典
+        from interfaces.memory import MemoryUpdate
+        self.update_memory(MemoryUpdate(
+            chapter_id=metadata.get("chapter_id", 0),
+            node_id=metadata.get("node_id", "unknown"),
+            target_character=metadata.get("target_character", "global"),
+            new_memories=[content],
+        ))
+        logger.debug(f"Added memory: {content[:50]}...")
+
     def get_all_characters(self) -> List[str]:
         """获取所有角色名称列表"""
         characters = self._global_memory.get("characters", {})

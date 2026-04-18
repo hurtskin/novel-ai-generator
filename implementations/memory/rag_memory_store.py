@@ -610,6 +610,39 @@ class RAGMemoryStore(MemoryStore):
                 del self._base_memory["characters"][character_name]
                 self._save_base_memory()
 
+    def clear(self) -> None:
+        """清空所有记忆数据"""
+        self._base_memory = {}
+        self._save_base_memory()
+        if self._vector_store:
+            self._vector_store.clear()
+        logger.info("RAG memory store cleared")
+
+    def add_memory(self, content: str, metadata: Dict[str, Any]) -> None:
+        """添加记忆（兼容 RAG 接口）"""
+        # 将内容分块并添加到向量存储
+        chunks = self._chunk_text(content)
+        if not chunks:
+            return
+        
+        # 获取嵌入向量
+        embeddings = self._embedding_client.embed(chunks)
+        
+        # 构建元数据列表
+        metadatas = [
+            {
+                **metadata,
+                "chunk_index": i,
+                "total_chunks": len(chunks),
+                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+            }
+            for i in range(len(chunks))
+        ]
+        
+        # 添加到向量存储
+        self._vector_store.add(chunks, embeddings, metadatas)
+        logger.debug(f"Added memory to RAG: {content[:50]}...")
+
     def get_all_characters(self) -> List[str]:
         """获取所有角色名称列表"""
         characters = self._base_memory.get("characters", {})
