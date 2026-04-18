@@ -199,8 +199,8 @@ STRICT RULES:
         {"role": "user", "content": prompt}
     ]
     
-    result = llm_client.chat(messages=messages)
-    content = result.get("content", "{}")
+    response = llm_client.chat(messages=messages)
+    content = response.content
     
     logger.debug(f"Director general raw content: {content[:500]}")
     

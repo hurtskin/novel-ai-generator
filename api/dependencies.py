@@ -26,6 +26,7 @@ from services.interfaces import (
     ConfigManagerService,
     DebugLogService,
     NovelGeneratorService,
+    StateManagerService,
 )
 
 logger = logging.getLogger(__name__)
@@ -210,6 +211,19 @@ def get_novel_generator_service(container: Container = Depends(get_container)) -
         NovelGeneratorService: 小说生成服务实例
     """
     return container.resolve(NovelGeneratorService)
+
+
+def get_state_manager_service(container: Container = Depends(get_container)) -> StateManagerService:
+    """
+    获取状态管理服务
+    
+    Args:
+        container: 依赖注入容器
+        
+    Returns:
+        StateManagerService: 状态管理服务实例
+    """
+    return container.resolve(StateManagerService)
 
 
 async def verify_token(

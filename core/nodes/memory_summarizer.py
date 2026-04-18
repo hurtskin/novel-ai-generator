@@ -38,20 +38,14 @@ def memory_summarizer(
         {"role": "user", "content": prompt}
     ]
     
-    result = llm_client.chat(
+    response = llm_client.chat(
         messages=messages,
         temperature=0.3,
         top_p=0.9,
         max_tokens=4096
     )
-    
-    # 兼容 ChatResponse 对象和字典两种格式
-    if hasattr(result, 'content'):
-        content = result.content
-    elif isinstance(result, dict):
-        content = result.get("content", "[]")
-    else:
-        content = "[]"
+
+    content = response.content
     
     try:
         cards = json.loads(content)

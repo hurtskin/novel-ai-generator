@@ -56,29 +56,32 @@ class RAGRetrievalManager(RAGRetrievalService):
         if not self.memory_store:
             logger.warning("Memory store not configured, returning empty results")
             return []
-        
+
         try:
             # 调用 memory_store 的检索方法
-            results = await self.memory_store.retrieve(
-                query=query,
+            # RAGMemoryStore.retrieve() 接受 queries 列表和 chapter_id
+            chapter_id = filters.get("chapter_id") if filters else None
+            results, metrics = await self.memory_store.retrieve(
+                queries=[query],
+                chapter_id=chapter_id,
                 top_k=top_k,
-                filters=filters or {},
             )
-            
+
             # 转换为 RAGSearchResult
+            # results 是 List[Dict]，包含 content, score, metadata 等字段
             search_results = []
             for result in results:
                 search_results.append(
                     RAGSearchResult(
-                        content=result.content,
-                        score=result.score,
-                        metadata=result.metadata,
+                        content=result.get("content", ""),
+                        score=result.get("score", 0.0),
+                        metadata=result.get("metadata", {}),
                     )
                 )
-            
+
             logger.debug(f"RAG search returned {len(search_results)} results for query: {query[:50]}...")
             return search_results
-            
+
         except Exception as e:
             logger.error(f"RAG search failed: {e}")
             return []

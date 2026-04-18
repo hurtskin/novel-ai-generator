@@ -74,7 +74,7 @@ def text_polisher(
         {"role": "user", "content": user_content}
     ]
 
-    result = llm_client.chat_with_completion_check(
+    response = llm_client.chat_with_completion_check(
         messages=messages,
         temperature=0.7,
         top_p=0.9,
@@ -83,6 +83,6 @@ def text_polisher(
         check_interval=800,
     )
 
-    polished_text = result.get("content", "")
+    polished_text = response.content
 
     return {"polished_text": polished_text}

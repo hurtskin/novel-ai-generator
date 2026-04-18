@@ -239,6 +239,111 @@ class StateManagerService(ABC):
     async def load_state(self) -> None:
         """从持久化存储加载状态"""
         pass
+    
+    @abstractmethod
+    def start_intervention(self, data: Dict[str, Any]) -> None:
+        """
+        开始人工干预
+        
+        设置干预状态，暂停生成流程等待前端响应
+        
+        Args:
+            data: 干预相关数据
+        """
+        pass
+    
+    @abstractmethod
+    def select_version(self, version_index: int) -> None:
+        """
+        选择历史版本
+        
+        前端调用，选择某个历史版本继续
+        
+        Args:
+            version_index: 选择的版本索引
+        """
+        pass
+    
+    @abstractmethod
+    def retry_current_node(self) -> None:
+        """
+        重试当前节点
+        
+        前端调用，清空当前节点的版本历史并重新生成
+        """
+        pass
+    
+    @abstractmethod
+    def get_sliding_window(self) -> Dict[str, Any]:
+        """
+        获取滑动窗口状态
+        
+        Returns:
+            Dict[str, Any]: 滑动窗口状态
+        """
+        pass
+    
+    @abstractmethod
+    def update_sliding_window(self, updates: Dict[str, Any]) -> None:
+        """
+        更新滑动窗口状态
+        
+        Args:
+            updates: 更新字典
+        """
+        pass
+    
+    @abstractmethod
+    def add_node_version(self, node_index: int, content: str) -> None:
+        """
+        添加节点版本
+        
+        Args:
+            node_index: 节点索引
+            content: 内容
+        """
+        pass
+    
+    @abstractmethod
+    def get_node_versions(self, node_index: int) -> List[str]:
+        """
+        获取节点的所有版本
+        
+        Args:
+            node_index: 节点索引
+            
+        Returns:
+            List[str]: 版本列表
+        """
+        pass
+    
+    @abstractmethod
+    def set_node_status(self, node_index: int, status: str) -> None:
+        """
+        设置节点状态
+        
+        Args:
+            node_index: 节点索引
+            status: 状态 (pending/passed)
+        """
+        pass
+    
+    @abstractmethod
+    def clear_node_versions(self, node_index: int) -> None:
+        """
+        清空节点版本
+        
+        Args:
+            node_index: 节点索引
+        """
+        pass
+    
+    @abstractmethod
+    def reset_retry_state(self) -> None:
+        """
+        重置重试状态
+        """
+        pass
 
 
 class SnapshotManagerService(ABC):

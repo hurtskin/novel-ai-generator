@@ -22,6 +22,7 @@ from api.dependencies import (
     get_performance_metrics_service,
     get_config_manager_service,
     get_debug_log_service,
+    get_state_manager_service,
     require_generation_not_running,
     GenerationState,
 )
@@ -33,6 +34,7 @@ from services.interfaces import (
     ConfigManagerService, ConfigManagerError,
     DebugLogService, DebugLogError,
     NovelGeneratorService,
+    StateManagerService,
 )
 
 logger = logging.getLogger(__name__)
@@ -637,7 +639,7 @@ async def _run_generation_task(
         request: 生成请求
         state: 生成状态
     """
-    from core.container_config import initialize_container
+    from core.container_config import initialize_container_with_rag
     from services.interfaces import GenerationRequest as NovelGenerationRequest, NovelStyle
     
     try:
@@ -646,7 +648,7 @@ async def _run_generation_task(
         logger.info(f"Task {task_id} running with theme: {request.theme[:50]}...")
         
         # 初始化依赖注入容器
-        container = initialize_container()
+        container = initialize_container_with_rag()
         
         # 获取小说生成服务
         novel_generator = container.resolve(NovelGeneratorService)
@@ -1022,4 +1024,131 @@ async def debug_log(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to perform debug log operation: {str(e)}",
+        )
+
+
+class SelectVersionRequest(BaseModel):
+    """
+    选择版本请求模型
+    
+    Attributes:
+        version_index: 选择的版本索引
+    """
+    version_index: int = Field(..., description="选择的版本索引")
+
+
+class SelectVersionResponse(BaseModel):
+    """
+    选择版本响应模型
+    
+    Attributes:
+        status: 操作状态
+        message: 状态消息
+        version_index: 选择的版本索引
+    """
+    status: str = Field(..., description="操作状态")
+    message: str = Field(..., description="状态消息")
+    version_index: int = Field(..., description="选择的版本索引")
+
+
+class RetryNodeResponse(BaseModel):
+    """
+    重试节点响应模型
+    
+    Attributes:
+        status: 操作状态
+        message: 状态消息
+    """
+    status: str = Field(..., description="操作状态")
+    message: str = Field(..., description="状态消息")
+
+
+@router.post(
+    "/select_version",
+    response_model=SelectVersionResponse,
+    status_code=status.HTTP_200_OK,
+    summary="选择历史版本",
+    description="人工干预时选择某个历史版本继续生成",
+)
+async def select_version(
+    request: SelectVersionRequest,
+    state_manager: StateManagerService = Depends(get_state_manager_service),
+) -> SelectVersionResponse:
+    """
+    选择历史版本
+    
+    当生成流程触发人工干预时，前端调用此接口选择某个历史版本。
+    选择后，生成流程会继续执行。
+    
+    Args:
+        request: 选择版本请求
+        state_manager: 状态管理服务
+        
+    Returns:
+        SelectVersionResponse: 选择响应
+        
+    Raises:
+        HTTPException: 500 - 服务器内部错误
+    """
+    try:
+        # 选择版本
+        state_manager.select_version(request.version_index)
+        
+        logger.info(f"Version {request.version_index} selected")
+        
+        return SelectVersionResponse(
+            status="success",
+            message="Version selected successfully",
+            version_index=request.version_index,
+        )
+        
+    except Exception as e:
+        logger.error(f"Failed to select version: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to select version: {str(e)}",
+        )
+
+
+@router.post(
+    "/retry_node",
+    response_model=RetryNodeResponse,
+    status_code=status.HTTP_200_OK,
+    summary="重试当前节点",
+    description="人工干预时选择重试当前节点",
+)
+async def retry_node(
+    state_manager: StateManagerService = Depends(get_state_manager_service),
+) -> RetryNodeResponse:
+    """
+    重试当前节点
+    
+    当生成流程触发人工干预时，前端调用此接口选择重试当前节点。
+    调用后，生成流程会清空当前节点的版本历史并重新生成。
+    
+    Args:
+        state_manager: 状态管理服务
+        
+    Returns:
+        RetryNodeResponse: 重试响应
+        
+    Raises:
+        HTTPException: 500 - 服务器内部错误
+    """
+    try:
+        # 重试当前节点
+        state_manager.retry_current_node()
+        
+        logger.info("Retry current node requested")
+        
+        return RetryNodeResponse(
+            status="success",
+            message="Retry current node requested",
+        )
+        
+    except Exception as e:
+        logger.error(f"Failed to retry node: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to retry node: {str(e)}",
         )

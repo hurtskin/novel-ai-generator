@@ -9,6 +9,17 @@ import logging
 import os
 from typing import Dict, Any
 
+# 启动时清空 app.log
+app_log_path = 'logs/app.log'
+try:
+    os.makedirs(os.path.dirname(app_log_path), exist_ok=True)
+    if os.path.exists(app_log_path):
+        with open(app_log_path, "w", encoding="utf-8") as f:
+            f.write("")
+        print("App log cleared on startup")
+except Exception as e:
+    print(f"Failed to clear app log: {e}")
+
 # 配置日志
 logging.basicConfig(
     level=logging.INFO,
@@ -65,10 +76,18 @@ def initialize_application() -> Any:
     logger.info("Initializing Novel AI Generator...")
     
     # 初始化依赖注入容器
-    from core.container_config import initialize_container
-    container = initialize_container()
+    from core.container_config import initialize_container_with_rag
+    container = initialize_container_with_rag()
     logger.info("Dependency injection container initialized")
-    
+
+    # 主动解析 DebugLogService 以触发初始化（会执行启动时清空）
+    try:
+        from services.interfaces import DebugLogService
+        debug_log_service = container.resolve(DebugLogService)
+        logger.info("DebugLogService initialized, debug log cleared on startup")
+    except Exception as e:
+        logger.warning(f"Failed to initialize DebugLogService: {e}")
+
     # 打印依赖映射
     print_dependency_mappings(container)
     

@@ -28,37 +28,37 @@ UNIT_TYPE_INSTRUCTIONS = {
 }
 
 
-def _build_actor_prompt(prompt_components: PromptComponents, user_info_section: str = "") -> str:
+def _build_actor_prompt(prompt_components: Dict[str, Any], user_info_section: str = "") -> str:
     """构建场景写作的完整提示词"""
     parts = []
-    
-    if prompt_components.identity:
-        parts.append(f"角色设定：{prompt_components.identity}")
-    
-    if prompt_components.current_event:
-        parts.append(f"## 当前事件\n{prompt_components.current_event}")
-    
-    if prompt_components.expected_reaction:
-        parts.append(f"## 预期反应\n{prompt_components.expected_reaction}")
-    
-    if prompt_components.long_term_memory:
-        parts.append("## 背景记忆\n" + "\n".join(f"- {m}" for m in prompt_components.long_term_memory))
-    
-    if prompt_components.short_term_memory:
-        parts.append("## 本章记忆\n" + "\n".join(f"- {m}" for m in prompt_components.short_term_memory))
-    
-    if prompt_components.current_situation:
-        parts.append(f"## 场景设定\n{prompt_components.current_situation}")
-    
-    if prompt_components.goals:
-        parts.append(f"## 场景目标\n{prompt_components.goals}")
-    
-    if prompt_components.constraints:
-        parts.append("## 注意事项\n" + "\n".join(f"- {c}" for c in prompt_components.constraints))
-    
-    if prompt_components.rag_context:
+
+    if prompt_components.get("identity"):
+        parts.append(f"角色设定：{prompt_components.get('identity')}")
+
+    if prompt_components.get("current_event"):
+        parts.append(f"## 当前事件\n{prompt_components.get('current_event')}")
+
+    if prompt_components.get("expected_reaction"):
+        parts.append(f"## 预期反应\n{prompt_components.get('expected_reaction')}")
+
+    if prompt_components.get("long_term_memory"):
+        parts.append("## 背景记忆\n" + "\n".join(f"- {m}" for m in prompt_components.get("long_term_memory", [])))
+
+    if prompt_components.get("short_term_memory"):
+        parts.append("## 本章记忆\n" + "\n".join(f"- {m}" for m in prompt_components.get("short_term_memory", [])))
+
+    if prompt_components.get("current_situation"):
+        parts.append(f"## 场景设定\n{prompt_components.get('current_situation')}")
+
+    if prompt_components.get("goals"):
+        parts.append(f"## 场景目标\n{prompt_components.get('goals')}")
+
+    if prompt_components.get("constraints"):
+        parts.append("## 注意事项\n" + "\n".join(f"- {c}" for c in prompt_components.get("constraints", [])))
+
+    if prompt_components.get("rag_context"):
         rag_parts = ["## 该角色已经拥有的记忆和经历\n"]
-        for i, ctx in enumerate(prompt_components.rag_context, 1):
+        for i, ctx in enumerate(prompt_components.get("rag_context", []), 1):
             rag_parts.append(f"【经历 {i}】来源：{ctx.get('source', 'unknown')}，相似度：{ctx.get('score', 0):.2f}")
             rag_parts.append(f"{ctx.get('content', '')}\n")
         parts.append("\n".join(rag_parts))
@@ -325,8 +325,8 @@ def role_actor(
             }
         }
     
-    generation_prompt = role_assigner_output.generation_prompt
-    
+    generation_prompt = role_assigner_output.get("generation_prompt", {})
+
     user_info_section = ""
     if user_theme:
         user_info_section = f"""
@@ -336,14 +336,14 @@ def role_actor(
 - 总字数: {user_total_words}
 - 角色数: {user_character_count}
 """
-    
+
     system_content_parts = []
-    if generation_prompt.identity:
-        system_content_parts.append(generation_prompt.identity)
-    if generation_prompt.current_event:
-        system_content_parts.append(f"\n## 当前事件\n{generation_prompt.current_event}")
-    if generation_prompt.expected_reaction:
-        system_content_parts.append(f"\n## 预期反应\n{generation_prompt.expected_reaction}")
+    if generation_prompt.get("identity"):
+        system_content_parts.append(generation_prompt.get("identity"))
+    if generation_prompt.get("current_event"):
+        system_content_parts.append(f"\n## 当前事件\n{generation_prompt.get('current_event')}")
+    if generation_prompt.get("expected_reaction"):
+        system_content_parts.append(f"\n## 预期反应\n{generation_prompt.get('expected_reaction')}")
     
     system_content = "\n".join(system_content_parts)
     
@@ -361,7 +361,7 @@ def role_actor(
     retry_count = 0
     
     while retry_count <= max_retries:
-        result = llm_client.chat_with_completion_check(
+        response = llm_client.chat_with_completion_check(
             messages=messages,
             temperature=0.8,
             top_p=0.9,
@@ -369,8 +369,8 @@ def role_actor(
             stream_callback=stream_callback,
             check_interval=800,
         )
-        
-        content = result.get("content", "")
+
+        content = response.content
         
         # 检测内容是否被截断
         is_truncated = False
@@ -404,7 +404,7 @@ def role_actor(
         memory_update = {
             "chapter_id": chapter_id,
             "node_id": node_id,
-            "target_character": role_assigner_output.target_character,
+            "target_character": role_assigner_output.get("target_character", ""),
             "new_memories": state_change_report.get("new_memories", []),
             "emotion_shift": state_change_report.get("emotion_shift", ""),
             "new_discoveries": state_change_report.get("new_discoveries", []),

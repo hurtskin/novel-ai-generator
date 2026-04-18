@@ -80,6 +80,7 @@ class NovelGenerator(NovelGeneratorService):
         websocket_service: WebSocketBroadcastService,
         file_output_service: FileOutputService,
         rag_service: RAGRetrievalService,
+        state_manager: StateManagerService,
     ):
         """
         初始化小说生成服务
@@ -89,6 +90,7 @@ class NovelGenerator(NovelGeneratorService):
             memory_store: 记忆存储
             observability: 可观测性后端
             config_provider: 配置提供者
+            state_manager: 状态管理服务
         """
         self.llm_client = llm_client
         self.memory_store = memory_store
@@ -97,6 +99,7 @@ class NovelGenerator(NovelGeneratorService):
         self.file_output = file_output_service
         self.rag = rag_service
         self.websocket = websocket_service
+        self.state_manager = state_manager
         
         self._current_task_id: Optional[str] = None
         self._is_running: bool = False
@@ -107,13 +110,6 @@ class NovelGenerator(NovelGeneratorService):
         self._current_node: str = ""
         
         logger.info("NovelGenerator initialized")
-
-        if self.rag:
-            try:
-                asyncio.create_task(self.rag.clear())
-                logger.info("RAG store clear initiated for new generation")
-            except Exception as e:
-                logger.warning(f"Failed to initiate RAG clear: {e}")
         
         generation_config = self.config_provider.get_generation_config()
         self._mock_mode = generation_config.mock_mode 
@@ -192,6 +188,14 @@ class NovelGenerator(NovelGeneratorService):
         self.observability.log_event(
             "INFO", 0, "GENERATOR", f"Task {self._current_task_id} started"
         )
+
+        # 清空 RAG 存储（确保新任务开始时数据干净）
+        if self.rag:
+            try:
+                await self.rag.clear()
+                logger.info("RAG store cleared for new generation")
+            except Exception as e:
+                logger.warning(f"Failed to clear RAG store: {e}")
         
         try:
             # 步骤 1: Director General
@@ -574,13 +578,32 @@ class NovelGenerator(NovelGeneratorService):
     ) -> Dict[str, Any]:
         """运行 Self Check 节点 - 支持滑动窗口"""
         plan = context.get("plan")
+        request = context.get("request")
         
         # 构建标准
+        character_cards = []
+        if hasattr(plan, 'character_cards') and plan.character_cards:
+            for card in plan.character_cards:
+                if hasattr(card, 'model_dump'):
+                    character_cards.append(card.model_dump())
+                elif isinstance(card, dict):
+                    character_cards.append(card)
+
         standards = {
             'outline': plan.outline if hasattr(plan, 'outline') else '',
             'world_building': plan.world_building if hasattr(plan, 'world_building') else {},
-            'characters': plan.character_cards if hasattr(plan, 'character_cards') else [],
+            'characters': character_cards,
         }
+        
+        # 构建用户输入参数
+        user_input = {}
+        if request:
+            user_input = {
+                'theme': getattr(request, 'theme', ''),
+                'style': getattr(request, 'style', ''),
+                'total_words': getattr(request, 'total_words', 0),
+                'character_count': getattr(request, 'character_count', 0),
+            }
         
         # 使用滑动窗口内容作为当前章节内容
         current_content = window_content + "\n\n" + content if window_content else content
@@ -595,6 +618,7 @@ class NovelGenerator(NovelGeneratorService):
             node_id=node_id,
             llm_client=self.llm_client,
             mock_mode=self._mock_mode,
+            user_input=user_input,
         )
         
         logger.debug(f"SELF_CHECK completed for chapter {chapter_number}, node {node_id}")
@@ -861,19 +885,57 @@ class NovelGenerator(NovelGeneratorService):
             if sequence.get_retry_count() >= max_retries:
                 logger.warning(f"Node {node_id} exceeded max retries ({max_retries}), triggering human intervention")
                 
-                # 触发人工干预
-                if self.websocket:
-                    await self.websocket.broadcast_intervention({
-                        'chapter': chapter_number,
-                        'node_id': node_id,
-                        'content': content,
-                        'suggestions': check_result.get('improvement_suggestions', ''),
-                        'retry_count': sequence.get_retry_count(),
-                    })
+                # 获取当前节点索引
+                current_index = sequence.get_current_index() - 1
                 
-                # 简化处理：直接返回当前内容（实际应该等待人工决策）
-                # TODO: 实现人工干预等待机制
-                return {'passed': True, 'content': content}
+                # 获取滑动窗口中的版本
+                sw = self.state_manager.get_sliding_window()
+                node_versions = sw.get("node_contents", {}).get(current_index, {}).get("versions", [])
+                
+                # 触发人工干预
+                intervention_data = {
+                    'chapter': chapter_number,
+                    'node_index': current_index,
+                    'node_id': node_id,
+                    'versions': node_versions,
+                }
+                
+                # 广播需要人工审查
+                if self.websocket:
+                    await self.websocket.broadcast_intervention(intervention_data)
+                
+                # 设置干预状态并等待前端响应
+                self.state_manager.start_intervention(intervention_data)
+                
+                # 等待前端响应（通过 is_paused 循环等待）
+                while self.state_manager.get_state().get('is_paused', False):
+                    await asyncio.sleep(0.5)
+                
+                # 获取滑动窗口更新
+                sw = self.state_manager.get_sliding_window()
+                retry_current = sw.get('retry_current', False)
+                
+                if retry_current:
+                    # 重试当前节点
+                    self.state_manager.clear_node_versions(current_index)
+                    self.state_manager.reset_retry_state()
+                    sequence.reset_retry_count()
+                    logger.info(f"Manual retry triggered for node {node_id}")
+                    continue
+                else:
+                    # 选择历史版本
+                    selected_version_idx = sw.get('selected_version_idx', 0)
+                    selected_content = node_versions[selected_version_idx] if node_versions else content
+                    
+                    # 清空版本历史
+                    self.state_manager.clear_node_versions(current_index)
+                    
+                    # 重置反馈和重试计数
+                    self.state_manager.update_state({'chapter_feedback': ''})
+                    self.state_manager.reset_retry_state()
+                    
+                    logger.info(f"Manual version {selected_version_idx} selected for node {node_id}")
+                    return {'passed': True, 'content': selected_content}
             
             # 自动重试
             logger.info(f"Node {node_id} needs revision, retrying ({sequence.get_retry_count() + 1}/{max_retries})")

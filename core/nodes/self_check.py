@@ -25,6 +25,7 @@ def self_check(
     node_id: int = 0,
     llm_client: Any = None,
     mock_mode: bool = False,
+    user_input: Dict[str, Any] = None,
 ) -> Dict[str, Any]:
     """
     自检节点
@@ -40,63 +41,59 @@ def self_check(
         node_id: 节点ID
         llm_client: LLM 客户端实例（依赖注入）
         mock_mode: 是否使用模拟模式
+        user_input: 用户输入参数（包含主题、风格、总字数、角色数等）
         
     Returns:
         Dict[str, Any]: 包含是否需要修改、问题类型、具体问题、改进建议的输出
     """
     if mock_mode:
-        should_pass = random.random() > 0.5
-        
-        if should_pass:
-            return {
-                "needs_revision": False,
-                "issue_types": [],
-                "specific_issues": [],
-                "improvement_suggestions": "模拟通过检查"
+        # 测试模式：必定返回需要修订
+        issues = [
+            {
+                "type": "角色",
+                "issue": "角色行为与设定不一致",
+                "suggestion": "请加强角色行为的描写，确保角色行为符合其设定性格"
+            },
+            {
+                "type": "情节",
+                "issue": "情节发展过于突兀",
+                "suggestion": "请增加情节过渡，使故事发展更自然流畅"
+            },
+            {
+                "type": "情感",
+                "issue": "情感转折不够自然",
+                "suggestion": "请铺垫情感变化的前因后果，使情感转折更真实"
+            },
+            {
+                "type": "情节",
+                "issue": "场景衔接不流畅",
+                "suggestion": "请增加场景之间的过渡描写"
+            },
+            {
+                "type": "角色",
+                "issue": "对话缺乏张力",
+                "suggestion": "请增加对话中的冲突和悬念"
             }
-        else:
-            issues = [
-                {
-                    "type": "角色",
-                    "issue": "角色行为与设定不一致",
-                    "suggestion": "请加强角色行为的描写，确保角色行为符合其设定性格"
-                },
-                {
-                    "type": "情节",
-                    "issue": "情节发展过于突兀",
-                    "suggestion": "请增加情节过渡，使故事发展更自然流畅"
-                },
-                {
-                    "type": "情感",
-                    "issue": "情感转折不够自然",
-                    "suggestion": "请铺垫情感变化的前因后果，使情感转折更真实"
-                },
-                {
-                    "type": "情节",
-                    "issue": "场景衔接不流畅",
-                    "suggestion": "请增加场景之间的过渡描写"
-                },
-                {
-                    "type": "角色",
-                    "issue": "对话缺乏张力",
-                    "suggestion": "请增加对话中的冲突和悬念"
-                }
-            ]
-            selected = random.choice(issues)
-            return {
-                "needs_revision": True,
-                "issue_types": [selected["type"]],
-                "specific_issues": [selected["issue"]],
-                "improvement_suggestions": selected["suggestion"]
-            }
+        ]
+        selected = random.choice(issues)
+        return {
+            "needs_revision": True,
+            "issue_types": [selected["type"]],
+            "specific_issues": [selected["issue"]],
+            "improvement_suggestions": selected["suggestion"]
+        }
     
     standards_summary = json.dumps(director_general_standards, ensure_ascii=False, indent=2)
     memory_summary = json.dumps(summary, ensure_ascii=False, indent=2)
+    user_input_summary = json.dumps(user_input, ensure_ascii=False, indent=2) if user_input else "未提供"
     
     prompt = f"""作为文章编辑，请审阅当前节点的内容，判断文中和总导演的标准是否有较大的矛盾冲突处。
 
 ## 当前审查位置
 当前处于第 {chapter_id} 章节的第 {node_id} 节点
+
+## 用户输入要求
+{user_input_summary}
 
 ## 总导演标准
 {standards_summary}
@@ -134,9 +131,9 @@ def self_check(
         {"role": "user", "content": prompt}
     ]
     
-    result = llm_client.chat(messages=messages)
-    
-    return result.get("content", "{}")
+    response = llm_client.chat(messages=messages)
+
+    return response.content
 
 
 def validate_loop_guard(retry_count: int, max_retries: int) -> bool:

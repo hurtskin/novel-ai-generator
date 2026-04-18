@@ -56,6 +56,15 @@ class DebugLogManager(DebugLogService):
         os.makedirs(os.path.dirname(self._debug_log_path), exist_ok=True)
         
         logger.info(f"DebugLogManager initialized, log path: {self._debug_log_path}")
+
+        # 启动时清空调试日志
+        try:
+            if os.path.exists(self._debug_log_path):
+                with open(self._debug_log_path, "w", encoding="utf-8") as f:
+                    f.write("")
+                logger.info("Debug log cleared on startup")
+        except Exception as e:
+            logger.warning(f"Failed to clear debug log on startup: {e}")
     
     def get_debug_log(self) -> DebugLogResult:
         """

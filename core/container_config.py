@@ -27,6 +27,7 @@ from services.interfaces import (
     FileOutputService,
     RAGRetrievalService,
     NovelGeneratorService,
+    StateManagerService,
 )
 from services.novel_generator import NovelGenerator
 
@@ -234,6 +235,7 @@ def initialize_container(
                 websocket_service=c.resolve(WebSocketBroadcastService),
                 file_output_service=c.resolve(FileOutputService),
                 rag_service=c.resolve(RAGRetrievalService),
+                state_manager=c.resolve(StateManagerService),
             ),
             scope=Scope.SINGLETON
         )
@@ -275,13 +277,23 @@ def initialize_container_with_rag(
         )
         logger.info("Registered ConfigProvider -> YamlConfigProvider (Singleton)")
         
-        # 注册 LLMClient (Singleton)
+        # 注册 LLMClientFactory (Singleton)
+        # LLMClientFactoryImpl 根据配置创建对应的 LLM 客户端
         container.register(
-            LLMClient,
-            MoonshotClient,
+            LLMClientFactory,
+            LLMClientFactoryImpl,
             scope=Scope.SINGLETON
         )
-        logger.info("Registered LLMClient -> MoonshotClient (Singleton)")
+        logger.info("Registered LLMClientFactory -> LLMClientFactoryImpl (Singleton)")
+
+        # 注册 LLMClient (Singleton)
+        # 使用工厂根据配置创建对应的客户端（支持 Moonshot/Ollama 切换）
+        container.register_factory(
+            LLMClient,
+            lambda c: c.resolve(LLMClientFactory).get_default_client(),
+            scope=Scope.SINGLETON
+        )
+        logger.info("Registered LLMClient (Singleton)")
         
         # 注册 MemoryStore (Transient) - 使用 RAG 版本
         container.register(
@@ -306,7 +318,43 @@ def initialize_container_with_rag(
             scope=Scope.SINGLETON
         )
         logger.info("Registered StorageBackend -> JsonStorageBackend (Singleton)")
-        
+
+        # 注册 ConfigManagerService (Singleton)
+        # ConfigManager 管理全局配置，使用单例
+        container.register(
+            ConfigManagerService,
+            ConfigManager,
+            scope=Scope.SINGLETON
+        )
+        logger.info("Registered ConfigManagerService -> ConfigManager (Singleton)")
+
+        # 注册 DebugLogService (Singleton)
+        # DebugLogManager 管理调试日志，使用单例
+        container.register(
+            DebugLogService,
+            DebugLogManager,
+            scope=Scope.SINGLETON
+        )
+        logger.info("Registered DebugLogService -> DebugLogManager (Singleton)")
+
+        # 注册 WebSocketBroadcastService (Singleton)
+        # WebSocketBroadcastManager 管理 WebSocket 连接，使用单例模式
+        container.register(
+            WebSocketBroadcastService,
+            WebSocketBroadcastManager,
+            scope=Scope.SINGLETON
+        )
+        logger.info("Registered WebSocketBroadcastService -> WebSocketBroadcastManager (Singleton)")
+
+        # 注册 FileOutputService (Singleton)
+        # FileOutputManager 管理文件输出，使用单例模式
+        container.register(
+            FileOutputService,
+            FileOutputManager,
+            scope=Scope.SINGLETON
+        )
+        logger.info("Registered FileOutputService -> FileOutputManager (Singleton)")
+
         # 注册 VersionSelectorService (Singleton)
         container.register(
             VersionSelectorService,
@@ -347,7 +395,25 @@ def initialize_container_with_rag(
             scope=Scope.SINGLETON
         )
         logger.info("Registered RAGRetrievalService -> RAGRetrievalManager (Singleton)")
-        
+
+        # 注册 NovelGeneratorService (Singleton)
+        # NovelGenerator 管理小说生成，使用单例模式
+        container.register_factory(
+            NovelGeneratorService,
+            lambda c: NovelGenerator(
+                llm_client=c.resolve(LLMClient),
+                memory_store=c.resolve(MemoryStore),
+                observability=c.resolve(ObservabilityBackend),
+                config_provider=c.resolve(ConfigProvider),
+                websocket_service=c.resolve(WebSocketBroadcastService),
+                file_output_service=c.resolve(FileOutputService),
+                rag_service=c.resolve(RAGRetrievalService),
+                state_manager=c.resolve(StateManagerService),
+            ),
+            scope=Scope.SINGLETON
+        )
+        logger.info("Registered NovelGeneratorService -> NovelGenerator (Singleton)")
+
         logger.info("Container initialization with RAG completed successfully")
         return container
         

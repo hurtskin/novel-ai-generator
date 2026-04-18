@@ -81,6 +81,19 @@ class StateManager(StateManagerService):
         self._subscribers: Dict[str, Callable[[str, Any], None]] = {}
         self._subscriber_counter = 0
         
+        # 滑动窗口状态（用于人工干预）
+        self._sliding_window: Dict[str, Any] = {
+            "enabled": True,
+            "window_size": 2,
+            "window_start": 0,
+            "node_contents": {},
+            "prev_node_idx": -1,
+            "consecutive_failures": 0,
+            "retry_count": 0,
+            "retry_current": False,
+            "selected_version_idx": 0,
+        }
+        
         logger.info("StateManager initialized")
     
     def get_state(self) -> Dict[str, Any]:
@@ -333,3 +346,126 @@ class StateManager(StateManagerService):
             current = self._state.get("novel_content", "")
             self._state["novel_content"] = current + content
             self._notify_subscribers("novel_content", self._state["novel_content"])
+    
+    def start_intervention(self, data: Dict[str, Any]) -> None:
+        """
+        开始人工干预
+        
+        设置干预状态，暂停生成流程等待前端响应
+        
+        Args:
+            data: 干预相关数据（章节、节点、内容等）
+        """
+        with self._lock:
+            self._state["need_human_intervention"] = True
+            self._state["intervention_data"] = data
+            self._state["is_paused"] = True
+            logger.info(f"Human intervention started for chapter {data.get('chapter')}, node {data.get('node_id')}")
+    
+    def select_version(self, version_index: int) -> None:
+        """
+        选择历史版本
+        
+        前端调用，选择某个历史版本继续
+        
+        Args:
+            version_index: 选择的版本索引
+        """
+        with self._lock:
+            self._sliding_window["selected_version_idx"] = version_index
+            self._sliding_window["retry_current"] = False
+            self._state["need_human_intervention"] = False
+            self._state["intervention_data"] = None
+            self._state["is_paused"] = False
+            logger.info(f"Version {version_index} selected, resuming generation")
+    
+    def retry_current_node(self) -> None:
+        """
+        重试当前节点
+        
+        前端调用，清空当前节点的版本历史并重新生成
+        """
+        with self._lock:
+            self._sliding_window["retry_current"] = True
+            self._state["need_human_intervention"] = False
+            self._state["intervention_data"] = None
+            self._state["is_paused"] = False
+            logger.info("Retry current node requested, resuming generation")
+    
+    def get_sliding_window(self) -> Dict[str, Any]:
+        """
+        获取滑动窗口状态
+        
+        Returns:
+            Dict[str, Any]: 滑动窗口状态
+        """
+        with self._lock:
+            return self._sliding_window.copy()
+    
+    def update_sliding_window(self, updates: Dict[str, Any]) -> None:
+        """
+        更新滑动窗口状态
+        
+        Args:
+            updates: 更新字典
+        """
+        with self._lock:
+            self._sliding_window.update(updates)
+    
+    def add_node_version(self, node_index: int, content: str) -> None:
+        """
+        添加节点版本
+        
+        Args:
+            node_index: 节点索引
+            content: 内容
+        """
+        with self._lock:
+            if node_index not in self._sliding_window["node_contents"]:
+                self._sliding_window["node_contents"][node_index] = {"versions": [], "status": "pending"}
+            self._sliding_window["node_contents"][node_index]["versions"].append(content)
+    
+    def get_node_versions(self, node_index: int) -> List[str]:
+        """
+        获取节点的所有版本
+        
+        Args:
+            node_index: 节点索引
+            
+        Returns:
+            List[str]: 版本列表
+        """
+        with self._lock:
+            node_data = self._sliding_window["node_contents"].get(node_index, {})
+            return node_data.get("versions", [])
+    
+    def set_node_status(self, node_index: int, status: str) -> None:
+        """
+        设置节点状态
+        
+        Args:
+            node_index: 节点索引
+            status: 状态 (pending/passed)
+        """
+        with self._lock:
+            if node_index in self._sliding_window["node_contents"]:
+                self._sliding_window["node_contents"][node_index]["status"] = status
+    
+    def clear_node_versions(self, node_index: int) -> None:
+        """
+        清空节点版本
+        
+        Args:
+            node_index: 节点索引
+        """
+        with self._lock:
+            if node_index in self._sliding_window["node_contents"]:
+                self._sliding_window["node_contents"][node_index]["versions"] = []
+    
+    def reset_retry_state(self) -> None:
+        """
+        重置重试状态
+        """
+        with self._lock:
+            self._sliding_window["retry_current"] = False
+            self._sliding_window["retry_count"] = 0

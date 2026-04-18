@@ -278,6 +278,6 @@ STRICT RULES:
         {"role": "user", "content": prompt}
     ]
 
-    result = llm_client.chat(messages=messages)
+    response = llm_client.chat(messages=messages)
 
-    return result.get("content", "{}")
+    return response.content
