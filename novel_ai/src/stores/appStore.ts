@@ -52,8 +52,6 @@ export const useAppStore = create<AppState>((set) => ({
     total_nodes: 0,
     status: 'idle',
     is_paused: false,
-    estimated_remaining_time_min: 0,
-    estimated_remaining_cost_usd: 0,
   },
   chatMessages: [],
   memories: [],

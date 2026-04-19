@@ -46,9 +46,9 @@ class DebugLogManager(DebugLogService):
         # 线程安全
         self._lock = threading.RLock()
         
-        # 调试日志文件路径
+        # 调试日志文件路径（读取 app.log）
         self._debug_log_path = os.path.join(
-            os.path.dirname(__file__), "..", "logs", "debug.log"
+            os.path.dirname(__file__), "..", "logs", "app.log"
         )
         self._debug_log_path = os.path.abspath(self._debug_log_path)
         

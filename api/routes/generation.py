@@ -1055,6 +1055,46 @@ async def debug_log(
         )
 
 
+@router.get(
+    "/debuglog",
+    response_model=DebugLogResponse,
+    status_code=status.HTTP_200_OK,
+    summary="获取调试日志",
+    description="获取调试日志内容（简化接口，供前端直接调用）",
+)
+async def get_debug_log_simple(
+    debug_log_service: DebugLogService = Depends(get_debug_log_service),
+) -> DebugLogResponse:
+    """
+    获取调试日志内容（GET 简化接口）
+
+    前端可以直接使用 GET 请求获取日志内容，无需提供请求体。
+
+    Returns:
+        DebugLogResponse: 调试日志响应
+    """
+    try:
+        result = debug_log_service.get_debug_log()
+        return DebugLogResponse(
+            status=result.status,
+            message=result.message,
+            content=result.content,
+            exists=result.exists,
+        )
+    except DebugLogError as e:
+        logger.error(f"Debug log error: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e),
+        )
+    except Exception as e:
+        logger.error(f"Unexpected error in get_debug_log_simple: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get debug log: {str(e)}",
+        )
+
+
 class SelectVersionRequest(BaseModel):
     """
     选择版本请求模型

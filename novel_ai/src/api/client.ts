@@ -47,8 +47,6 @@ export interface ProgressData {
   total_nodes: number;
   status: 'idle' | 'running' | 'paused' | 'stopped' | 'completed';
   is_paused: boolean;
-  estimated_remaining_time_min: number;
-  estimated_remaining_cost_usd: number;
 }
 
 export interface ChatMessage {
@@ -104,11 +102,19 @@ export class ApiClient {
   private ws: WebSocket | null = null;
   private listeners: Map<string, Set<(data: any) => void>> = new Map();
 
-  async start(theme: string, style: string = 'novel', total_words: number = 10000, character_count: number = 3): Promise<{ task_id: string }> {
+  async start(
+    theme: string,
+    style: string = 'novel',
+    total_words: number = 10000,
+    character_count: number = 3,
+    genre: string = 'modern',
+    temperature: number = 0.7,
+    max_tokens: number = 4096
+  ): Promise<{ task_id: string }> {
     const res = await fetch(`${API_BASE}/api/start`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ theme, style, total_words, character_count }),
+      body: JSON.stringify({ theme, style, total_words, character_count, genre, temperature, max_tokens }),
     });
     return res.json();
   }
@@ -201,19 +207,16 @@ export class ApiClient {
 
   connect(): void {
     if (this.ws?.readyState === WebSocket.OPEN) {
-      console.log('WebSocket already open, skipping');
       return;
     }
 
     const wsUrl = API_BASE.replace('http://', 'ws://').replace('https://', 'ws://') + '/api/stream';
-    console.log('Creating WebSocket connection to:', wsUrl);
 
     fetch('http://127.0.0.1:8000/api/status')
       .then((response) => {
         if (!response.ok) {
           throw new Error('HTTP check failed');
         }
-        console.log('HTTP check OK, trying WebSocket...');
         return response.json();
       })
       .then(() => {
@@ -222,21 +225,16 @@ export class ApiClient {
           this.ws = ws;
 
           ws.onerror = (error) => {
-            console.error('WebSocket onerror:', error);
-            console.error('WebSocket readyState:', ws.readyState);
-            console.error('WebSocket url:', ws.url);
             this.emit('error', error);
           };
 
           ws.onopen = () => {
-            console.log('WebSocket onopen fired, readyState:', ws.readyState);
             this.emit('connected', {});
           };
 
           ws.onmessage = (event) => {
             try {
               const data = JSON.parse(event.data);
-              console.log('WebSocket message received:', data);
               if (data.type === 'ping') {
                 this.ws?.send(JSON.stringify({ type: 'pong' }));
                 return;
@@ -245,16 +243,13 @@ export class ApiClient {
                 return;
               }
               const payload = data.data || data.payload || data.message || {};
-              console.log('Emitting event:', data.type, 'with payload:', payload);
               this.emit(data.type, payload);
-              this.emit('*', data);
             } catch (e) {
               console.error('WebSocket message parse error:', e);
             }
           };
 
           ws.onclose = (event) => {
-            console.log('WebSocket onclose fired:', event.code, event.reason);
             this.emit('disconnected', {});
             if (event.code !== 1000) {
               setTimeout(() => this.connect(), 3000);
@@ -279,16 +274,13 @@ export class ApiClient {
       this.listeners.set(event, new Set());
     }
     this.listeners.get(event)!.add(callback);
-    console.log(`[ApiClient] Subscribed to event: ${event}, total listeners: ${this.listeners.get(event)!.size}`);
     return () => {
       this.listeners.get(event)?.delete(callback);
-      console.log(`[ApiClient] Unsubscribed from event: ${event}`);
     };
   }
 
   private emit(event: string, data: any): void {
     const listeners = this.listeners.get(event);
-    console.log(`[ApiClient] Emitting event: ${event}, listeners: ${listeners?.size || 0}`);
     if (listeners) {
       listeners.forEach((cb) => {
         try {
@@ -297,8 +289,6 @@ export class ApiClient {
           console.error(`[ApiClient] Error in event listener for ${event}:`, e);
         }
       });
-    } else {
-      console.log(`[ApiClient] No listeners for event: ${event}`);
     }
   }
 }

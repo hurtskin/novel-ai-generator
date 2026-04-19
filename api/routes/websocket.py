@@ -132,12 +132,10 @@ class WebSocketConnectionManager:
             if self._loop is not None:
                 # 使用 call_soon_threadsafe 将事件放入队列
                 self._loop.call_soon_threadsafe(self._event_queue.put_nowait, message)
-                logger.info(f"[WebSocket] Event '{event.type}' queued for broadcast")
             else:
                 # 如果没有事件循环，尝试直接放入（可能在主线程）
                 try:
                     self._event_queue.put_nowait(message)
-                    logger.info(f"[WebSocket] Event '{event.type}' queued (direct)")
                 except Exception as e:
                     logger.warning(f"[WebSocket] Failed to queue event '{event.type}': {e}")
         except Exception as e:
@@ -180,10 +178,8 @@ class WebSocketConnectionManager:
             return
         
         client_ids = self._subscriptions[channel] | self._subscriptions["all"]
-        logger.info(f"[WebSocket] Broadcasting '{message.get('type')}' to {len(client_ids)} clients on channel '{channel}'")
         
         if not client_ids:
-            logger.warning(f"[WebSocket] No clients subscribed to channel '{channel}' or 'all'")
             return
         
         dead_clients = []
@@ -195,7 +191,6 @@ class WebSocketConnectionManager:
             
             try:
                 await self._connections[client_id].send_json(message)
-                logger.info(f"[WebSocket] Message '{message.get('type')}' sent to client '{client_id}'")
             except Exception as e:
                 logger.warning(f"[WebSocket] Failed to send to {client_id}: {e}")
                 dead_clients.append(client_id)

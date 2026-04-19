@@ -69,8 +69,6 @@ export const App: React.FC = () => {
             total_nodes: 0,
             status: progressStatus,
             is_paused: status.is_paused || false,
-            estimated_remaining_time_min: 0,
-            estimated_remaining_cost_usd: 0,
           });
         }
       } catch (e) {
@@ -103,12 +101,10 @@ export const App: React.FC = () => {
       setProgress({
         current_chapter: data.current || 0,
         total_chapters: data.total || 0,
-        current_node: data.current_node || '',
+        current_node: data.current_node !== undefined ? String(data.current_node) : '',
         total_nodes: 0,
         status: 'running',
         is_paused: false,
-        estimated_remaining_time_min: 0,
-        estimated_remaining_cost_usd: data.estimated_remaining_cost || 0,
       });
     });
 

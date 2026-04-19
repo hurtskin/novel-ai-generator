@@ -7,6 +7,13 @@ export const ProgressPanel: React.FC = () => {
   const [userInput, setUserInput] = useState('');
   const [starting, setStarting] = useState(false);
 
+  // 新增表单字段
+  const [totalWords, setTotalWords] = useState(10000);
+  const [characterCount, setCharacterCount] = useState(3);
+  const [genre, setGenre] = useState('modern');
+  const [temperature, setTemperature] = useState(0.7);
+  const [maxTokens, setMaxTokens] = useState(4096);
+
   const theme = config?.ui?.theme || 'dark';
   const colors = theme === 'light' ? {
     bg: '#f5f5f5',
@@ -29,8 +36,6 @@ export const ProgressPanel: React.FC = () => {
   };
 
   const isRunning = progress.status === 'running' || progress.status === 'paused';
-  const costAlert = config?.performance?.cost_alert_usd || 10;
-  const isCostExceeded = progress.estimated_remaining_cost_usd > costAlert;
 
   const chapterPercent = progress.total_chapters > 0 
     ? ((progress.current_chapter - 1) / progress.total_chapters) * 100 
@@ -63,7 +68,7 @@ export const ProgressPanel: React.FC = () => {
     }
     setStarting(true);
     try {
-      await apiClient.start(userInput, 'novel', 10000, 3);
+      await apiClient.start(userInput, 'novel', totalWords, characterCount, genre, temperature, maxTokens);
       setProgress({ 
         status: 'running', 
         current_chapter: 1, 
@@ -109,8 +114,6 @@ export const ProgressPanel: React.FC = () => {
       total_nodes: 0,
       status: 'idle',
       is_paused: false,
-      estimated_remaining_time_min: 0,
-      estimated_remaining_cost_usd:0,
     });
     setUserInput('');
   };
@@ -155,8 +158,146 @@ export const ProgressPanel: React.FC = () => {
               style={{ ...inputStyle, background: colors.inputBg, color: colors.text, borderColor: colors.border, resize: 'vertical', minHeight: '80px' }}
             />
           </div>
-          <button 
-            onClick={handleStart} 
+
+          {/* 现代简洁表单 */}
+          <div style={{ 
+            display: 'flex', 
+            gap: '12px', 
+            marginBottom: '12px',
+            padding: '12px',
+            background: colors.bgSecondary,
+            borderRadius: '8px',
+            border: `1px solid ${colors.border}`
+          }}>
+            {/* 字数 */}
+            <div style={{ flex: 1 }}>
+              <input
+                type="number"
+                value={totalWords}
+                onChange={(e) => setTotalWords(Number(e.target.value))}
+                min={1000}
+                max={100000}
+                step={1000}
+                placeholder="字数"
+                style={{ 
+                  width: '100%',
+                  background: 'transparent',
+                  border: 'none',
+                  borderBottom: `2px solid ${colors.border}`,
+                  color: colors.text,
+                  fontSize: '13px',
+                  padding: '6px 0',
+                  outline: 'none',
+                  transition: 'border-color 0.2s'
+                }}
+              />
+              <span style={{ fontSize: '10px', color: colors.textSecondary }}>字数</span>
+            </div>
+
+            {/* 角色 */}
+            <div style={{ flex: '0 0 50px' }}>
+              <input
+                type="number"
+                value={characterCount}
+                onChange={(e) => setCharacterCount(Number(e.target.value))}
+                min={1}
+                placeholder="角色"
+                style={{ 
+                  width: '100%',
+                  background: 'transparent',
+                  border: 'none',
+                  borderBottom: `2px solid ${colors.border}`,
+                  color: colors.text,
+                  fontSize: '13px',
+                  padding: '6px 0',
+                  textAlign: 'center',
+                  outline: 'none'
+                }}
+              />
+              <span style={{ fontSize: '10px', color: colors.textSecondary }}>角色</span>
+            </div>
+
+            {/* 类型 */}
+            <div style={{ flex: '0 0 70px' }}>
+              <input
+                type="text"
+                value={genre}
+                onChange={(e) => setGenre(e.target.value)}
+                placeholder="类型"
+                style={{ 
+                  width: '100%',
+                  background: 'transparent',
+                  border: 'none',
+                  borderBottom: `2px solid ${colors.border}`,
+                  color: colors.text,
+                  fontSize: '13px',
+                  padding: '6px 0',
+                  outline: 'none'
+                }}
+              />
+              <span style={{ fontSize: '10px', color: colors.textSecondary }}>类型</span>
+            </div>
+
+            {/* Token */}
+            <div style={{ flex: '0 0 70px' }}>
+              <input
+                type="number"
+                value={maxTokens}
+                onChange={(e) => setMaxTokens(Number(e.target.value))}
+                min={100}
+                max={8192}
+                step={100}
+                placeholder="Token"
+                style={{ 
+                  width: '100%',
+                  background: 'transparent',
+                  border: 'none',
+                  borderBottom: `2px solid ${colors.border}`,
+                  color: colors.text,
+                  fontSize: '13px',
+                  padding: '6px 0',
+                  outline: 'none'
+                }}
+              />
+              <span style={{ fontSize: '10px', color: colors.textSecondary }}>Token</span>
+            </div>
+          </div>
+
+          {/* 温度滑块 */}
+          <div style={{ 
+            display: 'flex', 
+            alignItems: 'center', 
+            gap: '12px',
+            marginBottom: '12px',
+            padding: '0 4px'
+          }}>
+            <span style={{ fontSize: '12px', color: colors.textSecondary, whiteSpace: 'nowrap' }}>温度</span>
+            <input
+              type="range"
+              value={temperature}
+              onChange={(e) => setTemperature(Number(e.target.value))}
+              min={0}
+              max={2}
+              step={0.1}
+              style={{ 
+                flex: 1,
+                height: '4px',
+                borderRadius: '2px',
+                appearance: 'none',
+                background: `linear-gradient(to right, ${colors.accent} 0%, ${colors.accent} ${(temperature/2)*100}%, ${colors.border} ${(temperature/2)*100}%, ${colors.border} 100%)`
+              }}
+            />
+            <span style={{ 
+              fontSize: '12px', 
+              color: colors.text, 
+              fontWeight: 600,
+              minWidth: '32px',
+              textAlign: 'right'
+            }}>{temperature.toFixed(1)}</span>
+          </div>
+
+          <button
+            onClick={handleStart}
             disabled={starting || !userInput.trim() || connectionStatus !== 'connected'}
             style={{
               ...startBtnStyle,
@@ -206,22 +347,7 @@ export const ProgressPanel: React.FC = () => {
             </div>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-            <div style={{ ...cardStyle, background: colors.cardBg, borderColor: colors.border }}>
-              <div style={{ fontSize: '11px', color: colors.textSecondary, marginBottom: '4px' }}>预估剩余时间</div>
-              <div style={{ fontSize: '20px', fontWeight: 'bold', color: colors.text }}>
-                {progress.estimated_remaining_time_min > 0 
-                  ? `${progress.estimated_remaining_time_min.toFixed(1)} min` 
-                  : '--'}
-              </div>
-            </div>
-            <div style={{ ...cardStyle, background: colors.cardBg, borderColor: colors.border }}>
-              <div style={{ fontSize: '11px', color: colors.textSecondary, marginBottom: '4px' }}>预估成本</div>
-              <div style={{ fontSize: '20px', fontWeight: 'bold', color: isCostExceeded ? '#dc3545' : '#198754' }}>
-                ${progress.estimated_remaining_cost_usd.toFixed(4)}
-              </div>
-            </div>
-          </div>
+
 
           <div style={{ display: 'flex', gap: '8px' }}>
             <button 

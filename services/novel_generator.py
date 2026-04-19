@@ -128,11 +128,11 @@ class NovelGenerator(NovelGeneratorService):
     def _publish_event(self, event_type: str, data: dict) -> int:
         """
         发布事件到事件总线
-        
+
         Args:
             event_type: 事件类型
             data: 事件数据
-            
+
         Returns:
             int: 通知的订阅者数量
         """
