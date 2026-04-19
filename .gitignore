@@ -4,6 +4,9 @@ output/
 # Log files
 logs/
 
+# Config files (contains sensitive API keys)
+config.yaml
+
 # Python cache
 __pycache__/
 *.pyc

@@ -159,49 +159,46 @@ class FileOutputManager(FileOutputService):
         original_file_path: str,
     ) -> FileOutputResult:
         """
-        保存润色后的章节
-        
-        将润色后的章节保存到单独的文件，同时更新原始文件
-        
+        保存润色后的章节到最终文件
+
+        直接将润色后的章节追加到最终文件，不创建中间文件。
+
         Args:
             chapter_number: 章节号
             content: 润色内容
-            original_file_path: 原始文件路径
-            
+            original_file_path: 原始文件路径（用于生成最终文件名）
+
         Returns:
             FileOutputResult: 操作结果
         """
         try:
-            # 创建润色文件路径
             original_path = Path(original_file_path)
-            polished_filename = f"{original_path.stem}_chapter_{chapter_number}_polished{original_path.suffix}"
-            polished_path = original_path.parent / polished_filename
-            
-            # 保存润色内容到单独文件
-            async with aiofiles.open(polished_path, "w", encoding="utf-8") as f:
-                await f.write(f"=== Chapter {chapter_number} (Polished) ===\n\n")
-                await f.write(content)
-            
-            # 同时追加到原始文件（标记为润色版本）
-            async with aiofiles.open(original_file_path, "a", encoding="utf-8") as f:
-                await f.write(f"\n\n=== Chapter {chapter_number} (Polished) ===\n\n")
+            final_filename = f"{original_path.stem}_final{original_path.suffix}"
+            final_path = original_path.parent / final_filename
+
+            # 确保目录存在
+            final_path.parent.mkdir(parents=True, exist_ok=True)
+
+            # 直接追加到最终文件
+            async with aiofiles.open(final_path, "a", encoding="utf-8") as f:
+                await f.write(f"=== Chapter {chapter_number} ===\n\n")
                 await f.write(content)
                 await f.write("\n\n")
-            
-            logger.info(f"Saved polished chapter {chapter_number} to {polished_path}")
-            
+
+            logger.info(f"Appended chapter {chapter_number} to final file: {final_path}")
+
             return FileOutputResult(
                 success=True,
-                file_path=str(polished_path),
+                file_path=str(final_path),
                 bytes_written=len(content.encode("utf-8")),
-                message=f"Chapter {chapter_number} polished and saved",
+                message=f"Chapter {chapter_number} appended to final file",
             )
-            
+
         except Exception as e:
-            logger.error(f"Failed to save polished chapter {chapter_number}: {e}")
+            logger.error(f"Failed to save chapter {chapter_number}: {e}")
             return FileOutputResult(
                 success=False,
-                file_path=original_file_path,
+                file_path="",
                 bytes_written=0,
                 message=f"Error: {str(e)}",
             )
