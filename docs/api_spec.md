@@ -1,568 +1,700 @@
 # API 规范文档
 
-## Pydantic 模型字段说明
+> 本文档描述 Novel AI Generator 的 HTTP API 和 WebSocket 接口规范
+> 版本: 2.0.0
+> 更新日期: 2026-04-19
 
-### DirectorGeneralInput
+---
 
-| 字段名 | 类型 | 必填 | 描述 |
-|--------|------|------|------|
-| theme | str | 是 | 小说主题 |
-| style | str | 是 | 写作风格 |
-| total_words | int | 是 | 目标总字数 |
-| character_count | int | 是 | 角色数量 |
-| genre | str | 是 | 文体类型 |
+## 目录
 
-### DirectorGeneralOutput
+1. [概述](#概述)
+2. [HTTP API](#http-api)
+3. [WebSocket API](#websocket-api)
+4. [数据模型](#数据模型)
+5. [错误处理](#错误处理)
+6. [示例代码](#示例代码)
 
-| 字段名 | 类型 | 必填 | 描述 |
-|--------|------|------|------|
-| world_building | WorldBuilding | 是 | 世界观设定 |
-| writing_style | WritingStyle | 是 | 写作风格对象 |
-| outline | List[ChapterOutline] | 是 | 章节大纲列表 |
-| chapter_count | int | 是 | 章节总数 |
-| characters | List[CharacterProfile] | 是 | 角色档案列表 |
-| conflict_design | ConflictDesign | 是 | 冲突设计 |
-| foreshadowing | List[HookDesign] | 是 | 伏笔设计列表 |
-| character_arcs | List[ArcDesign] | 是 | 角色弧光列表 |
-| tone | str | 是 | 整体基调 |
-| genre_specific | GenreSpecific | 是 | 文体特定配置 |
+---
 
-### WorldBuilding
+## 概述
 
-| 字段名 | 类型 | 必填 | 描述 |
-|--------|------|------|------|
-| setting | str | 是 | 故事背景 |
-| time_period | str | 是 | 时间段 |
-| location | str | 是 | 地点 |
-| social_structure | str | 是 | 社会结构 |
-| rules | Dict[str, Any] | 是 | 规则设定 |
+### 基础信息
 
-### WritingStyle
+- **Base URL**: `http://localhost:8000`
+- **Content-Type**: `application/json`
+- **编码**: UTF-8
 
-| 字段名 | 类型 | 必填 | 描述 |
-|--------|------|------|------|
-| tone | str | 是 | 语气 |
-| perspective | str | 是 | 视角 |
-| pacing | str | 是 | 节奏 |
-| language_level | str | 是 | 语言层次 |
+### 认证
 
-### ChapterOutline
+当前版本暂不需要认证，后续版本将添加 API Key 认证。
 
-| 字段名 | 类型 | 必填 | 描述 |
-|--------|------|------|------|
-| chapter_id | int | 是 | 章节ID |
-| title | str | 是 | 章节标题 |
-| summary | str | 是 | 章节概要 |
-| key_events | List[str] | 是 | 关键事件列表 |
-| characters_involved | List[str] | 是 | 涉及角色列表 |
+---
 
-### CharacterProfile
+## HTTP API
 
-| 字段名 | 类型 | 必填 | 描述 |
-|--------|------|------|------|
-| name | str | 是 | 角色名 |
-| role | str | 是 | 角色定位 |
-| background | str | 是 | 角色背景 |
-| personality | str | 是 | 性格特点 |
-| goals | str | 是 | 角色目标 |
-| relationships | Dict[str, str] | 是 | 关系映射 |
+### 生成管理
 
-### ConflictDesign
+#### 启动生成任务
 
-| 字段名 | 类型 | 必填 | 描述 |
-|--------|------|------|------|
-| main_conflict | str | 是 | 主要冲突 |
-| sub_conflicts | List[str] | 是 | 次要冲突列表 |
-| stakes | str | 是 |  stakes 风险 |
+```http
+POST /api/start
+```
 
-### HookDesign
+启动新的小说生成任务。
 
-| 字段名 | 类型 | 必填 | 描述 |
-|--------|------|------|------|
-| hook_type | str | 是 | 钩子类型 |
-| content | str | 是 | 钩子内容 |
-| placement | str | 是 | 放置位置 |
+**请求体**:
 
-### ArcDesign
-
-| 字段名 | 类型 | 必填 | 描述 |
-|--------|------|------|------|
-| character_name | str | 是 | 角色名 |
-| starting_state | str | 是 | 起始状态 |
-| turning_point | str | 是 | 转折点 |
-| ending_state | str | 是 | 结束状态 |
-
-### GenreSpecific
-
-| 字段名 | 类型 | 必填 | 描述 |
-|--------|------|------|------|
-| genre | str | 是 | 文体类型 |
-| specific_fields | Dict[str, Any] | 是 | 文体特定字段 |
-
-### DirectorChapterInput
-
-| 字段名 | 类型 | 必填 | 描述 |
-|--------|------|------|------|
-| chapter_id | int | 是 | 章节ID |
-| director_general_output | DirectorGeneralOutput | 是 | 总导演输出 |
-| global_memory_snapshot | Dict[str, Any] | 是 | 全局记忆快照 |
-| genre | str | 是 | 文体类型 |
-
-### DirectorChapterOutput
-
-| 字段名 | 类型 | 必填 | 描述 |
-|--------|------|------|------|
-| chapter_outline | ChapterOutlineRef | 是 | 章节大纲 |
-| node_sequence | List[NodeConfig] | 是 | 节点序列 |
-| node_count | int | 是 | 节点数量 |
-| character_presence_plan | Dict[str, List[int]] | 是 | 角色出场计划 |
-| genre_specific | GenreSpecific | 是 | 文体特定配置 |
-
-### NodeConfig
-
-| 字段名 | 类型 | 必填 | 描述 |
-|--------|------|------|------|
-| node_id | str | 是 | 节点ID |
-| type | str | 是 | 节点类型 |
-| character | Optional[str] | 否 | 关联角色 |
-| description | str | 是 | 节点描述 |
-
-### MemoryCard
-
-| 字段名 | 类型 | 必填 | 描述 |
-|--------|------|------|------|
-| event_id | str | 是 | 事件ID |
-| timestamp | str | 是 | 时间戳 |
-| location | str | 是 | 地点 |
-| core_action | str | 是 | 核心动作 |
-| emotion_marks | Dict[str, str] | 是 | 情感标记 |
-| relationship_changes | Dict[str, str] | 是 | 关系变化 |
-| key_quote | str | 是 | 关键引语 |
-| future_impacts | List[str] | 是 | 未来影响 |
-| source_index | str | 是 | 源索引 |
-
-### RoleAssignerOutput
-
-| 字段名 | 类型 | 必填 | 描述 |
-|--------|------|------|------|
-| target_character | str | 是 | 目标角色 |
-| generation_prompt | PromptComponents | 是 | 生成提示词 |
-
-### PromptComponents
-
-| 字段名 | 类型 | 必填 | 描述 |
-|--------|------|------|------|
-| identity | str | 是 | 身份设定 |
-| long_term_memory | List[str] | 是 | 长期记忆 |
-| short_term_memory | List[str] | 是 | 短期记忆 |
-| recent_events | str | 是 | 最近事件 |
-| current_situation | str | 是 | 当前情况 |
-| relationships | Dict[str, str] | 是 | 关系映射 |
-| items | List[str] | 是 | 物品列表 |
-| goals | str | 是 | 目标 |
-| constraints | List[str] | 是 | 约束条件 |
-| genre_hints | str | 是 | 文体提示 |
-
-### RoleActorOutput
-
-| 字段名 | 类型 | 必填 | 描述 |
-|--------|------|------|------|
-| generated_content | str | 是 | 生成内容 |
-| state_change_report | StateChangeReport | 是 | 状态变化报告 |
-
-### StateChangeReport
-
-| 字段名 | 类型 | 必填 | 描述 |
-|--------|------|------|------|
-| new_memories | List[str] | 是 | 新记忆列表 |
-| emotion_shift | str | 是 | 情感变化 |
-| new_discoveries | List[str] | 是 | 新发现列表 |
-| relationship_updates | Dict[str, str] | 是 | 关系更新 |
-
-### SelfCheckOutput
-
-| 字段名 | 类型 | 必填 | 描述 |
-|--------|------|------|------|
-| needs_revision | bool | 是 | 是否需要修改 |
-| issue_types | List[str] | 是 | 问题类型列表 |
-| specific_issues | List[str] | 是 | 具体问题列表 |
-| improvement_suggestions | str | 是 | 改进建议 |
-
-### PerformanceMetrics
-
-| 字段名 | 类型 | 必填 | 描述 |
-|--------|------|------|------|
-| ttf_ms | float | 是 | 首Token延迟(ms) |
-| tps | float | 是 | 生成速度(tokens/s) |
-| api_latency_ms | float | 是 | API延迟(ms) |
-| prompt_tokens | int | 是 | 输入Token数 |
-| completion_tokens | int | 是 | 输出Token数 |
-| total_tokens | int | 是 | 总Token数 |
-| cost_usd | float | 是 | 预估成本(USD) |
-
-## HTTP API 端点
-
-### 启动生成任务
-- **端点**: `POST /api/start`
-- **描述**: 启动小说生成任务
-- **请求体**:
 ```json
 {
-  "book_id": "string",
+  "book_id": "default",
   "chapter_id": 1,
-  "theme": "string",
-  "style": "novel",
-  "characters": ["角色1", "角色2"],
+  "theme": "校园青春恋爱",
+  "style": "轻松",
+  "characters": ["阳光少年", "转学生女主"],
   "total_words": 10000,
-  "character_count": 3,
+  "character_count": 2,
   "genre": "novel"
 }
 ```
-- **参数说明**:
-  - `book_id` (string, optional): 书籍ID，用于标识不同的生成任务，默认为 "default"
-  - `chapter_id` (int, optional): 起始章节ID，默认为 1
-  - `theme` (string, required): 小说主题，如 "校园青春恋爱"、"玄幻冒险" 等
-  - `style` (string, required): 写作风格，如 "喜剧"、"正剧"、"轻松" 等
-  - `characters` (string[], optional): 角色描述列表，如 ["阳光少年", "转学生女主"]
-  - `total_words` (int, required): 目标总字数
-  - `character_count` (int, required): 角色数量
-  - `genre` (string, required): 文体类型，如 "novel"、"script"、"dialogue" 等
-- **响应**:
-```json
-{"status": "started"}
-```
 
-### 查询状态
-- **端点**: `GET /api/status`
-- **描述**: 查询当前生成任务状态
-- **响应**:
+**参数说明**:
+
+| 字段 | 类型 | 必填 | 描述 |
+|------|------|------|------|
+| book_id | string | 否 | 书籍ID，默认 "default" |
+| chapter_id | integer | 否 | 起始章节，默认 1 |
+| theme | string | 是 | 小说主题 |
+| style | string | 是 | 写作风格 |
+| characters | string[] | 否 | 角色描述列表 |
+| total_words | integer | 是 | 目标总字数 |
+| character_count | integer | 是 | 角色数量 |
+| genre | string | 是 | 文体类型 |
+
+**响应**:
+
 ```json
 {
-  "is_running": false,
+  "status": "started",
+  "book_id": "default",
+  "chapter_id": 1
+}
+```
+
+#### 查询生成状态
+
+```http
+GET /api/status
+```
+
+获取当前生成任务的详细状态。
+
+**响应**:
+
+```json
+{
+  "is_running": true,
   "is_paused": false,
   "is_stopped": false,
   "current_chapter": 1,
-  "current_node": "DIRECTOR_GENERAL",
-  "total_chapters": 3,
+  "current_node": "role_actor_3",
+  "total_chapters": 5,
+  "progress": {
+    "chapter_progress": 20,
+    "overall_progress": 15
+  },
   "error": null,
-  "novel_content": "..."
+  "novel_content": "生成的内容预览..."
 }
 ```
 
-### 暂停
-- **端点**: `POST /api/pause`
-- **响应**: `{"status": "paused"}`
+**字段说明**:
 
-### 继续
-- **端点**: `POST /api/resume`
-- **响应**: `{"status": "resumed"}`
+| 字段 | 类型 | 描述 |
+|------|------|------|
+| is_running | boolean | 是否正在运行 |
+| is_paused | boolean | 是否已暂停 |
+| is_stopped | boolean | 是否已停止 |
+| current_chapter | integer | 当前章节ID |
+| current_node | string | 当前节点ID |
+| total_chapters | integer | 总章节数 |
+| progress | object | 进度信息 |
+| error | string | 错误信息 |
+| novel_content | string | 当前生成内容 |
 
-### 终止
-- **端点**: `POST /api/stop`
-- **响应**: `{"status": "stopped"}`
+#### 暂停生成
 
-### 重新生成节点
-- **端点**: `POST /api/regenerate`
-- **描述**: 指定章节和节点重新生成
-- **请求体**:
+```http
+POST /api/pause
+```
+
+暂停当前生成任务。
+
+**响应**:
+
+```json
+{
+  "status": "paused"
+}
+```
+
+#### 恢复生成
+
+```http
+POST /api/resume
+```
+
+恢复已暂停的生成任务。
+
+**响应**:
+
+```json
+{
+  "status": "resumed"
+}
+```
+
+#### 停止生成
+
+```http
+POST /api/stop
+```
+
+停止当前生成任务。
+
+**响应**:
+
+```json
+{
+  "status": "stopped"
+}
+```
+
+### 节点管理
+
+#### 重新生成节点
+
+```http
+POST /api/regenerate
+```
+
+重新生成指定章节和节点的内容。
+
+**请求体**:
+
 ```json
 {
   "chapter_id": 1,
-  "node_id": "node_1"
+  "node_id": "role_actor_3"
 }
 ```
-- **请求参数验证**:
-  - `chapter_id`: 必须 >= 1
-  - `node_id`: 必须为非空字符串
-- **响应**:
-```json
-{"status": "regenerating", "chapter_id": 1, "node_id": "node_1"}
-```
-- **错误响应**:
-  - `400`: 无法再生指定节点（业务逻辑限制）
-  - `422`: 请求参数验证失败（chapter_id < 1 或 node_id 为空）
-  - `500`: 服务器内部错误
 
-### 重试节点
-- **端点**: `POST /api/retry_node`
-- **描述**: 重试当前失败的节点生成
-- **请求体**: 无（使用当前章节和节点）
-- **响应**:
+**参数说明**:
+
+| 字段 | 类型 | 必填 | 描述 |
+|------|------|------|------|
+| chapter_id | integer | 是 | 章节ID，必须 >= 1 |
+| node_id | string | 是 | 节点ID，非空 |
+
+**响应**:
+
+```json
+{
+  "status": "regenerating",
+  "chapter_id": 1,
+  "node_id": "role_actor_3"
+}
+```
+
+**错误响应**:
+
+| 状态码 | 描述 |
+|--------|------|
+| 400 | 无法再生指定节点（业务限制） |
+| 422 | 参数验证失败 |
+| 500 | 服务器内部错误 |
+
+#### 重试节点
+
+```http
+POST /api/retry_node
+```
+
+重试当前失败的节点生成。
+
+**响应**:
+
 ```json
 {
   "status": "success",
-  "message": "Retry attempt 1 initiated for node role_actor_1",
+  "message": "Retry attempt 1 initiated for node role_actor_3",
   "chapter_id": 1,
-  "node_id": "role_actor_1",
+  "node_id": "role_actor_3",
   "retry_count": 1,
   "can_retry": true
 }
 ```
-- **错误响应**:
-  - `400`: 没有正在运行的生成任务或没有活动节点
-  - `500`: 服务器内部错误
 
-### 获取快照列表
-- **端点**: `GET /api/snapshots`
-- **响应**:
-```json
-{"snapshots": ["snapshot1", "snapshot2"]}
+### 版本管理
+
+#### 获取版本列表
+
+```http
+GET /api/versions
 ```
 
-### 加载快照
-- **端点**: `GET /api/snapshot/{name}`
-- **描述**: 加载指定名称的状态快照
-- **响应**:
+获取当前章节的所有版本。
+
+**响应**:
+
 ```json
 {
-  "status": "success",
-  "snapshot": {
-    "timestamp": "2026-04-09T12:00:00",
-    "generation_state": {...},
-    "node_metrics": [...],
-    "chapter_metrics": {...},
-    "total_metrics": {...}
-  }
+  "chapter_id": 1,
+  "current_version": "v1.2",
+  "versions": [
+    {
+      "version_id": "v1.0",
+      "created_at": "2026-04-19T10:00:00Z",
+      "description": "初始版本"
+    },
+    {
+      "version_id": "v1.1",
+      "created_at": "2026-04-19T10:05:00Z",
+      "description": "修正角色对话"
+    }
+  ]
 }
 ```
 
-### 保存快照
-- **端点**: `POST /api/snapshot/{name}`
-- **描述**: 保存当前状态为快照
-- **响应**:
-```json
-{"status": "saved", "path": "logs/snapshots/name.json"}
+#### 选择版本
+
+```http
+POST /api/select_version
 ```
 
-### 性能指标
-- **端点**: `GET /api/performance`
-- **描述**: 获取性能指标汇总，包括节点级、章节级和总体指标
-- **响应**:
+选择特定版本作为当前版本。
+
+**请求体**:
+
 ```json
 {
-  "per_node": [
+  "chapter_id": 1,
+  "version_id": "v1.1"
+}
+```
+
+**响应**:
+
+```json
+{
+  "status": "success",
+  "chapter_id": 1,
+  "selected_version": "v1.1"
+}
+```
+
+### 快照管理
+
+#### 获取快照列表
+
+```http
+GET /api/snapshots
+```
+
+获取所有可用的状态快照。
+
+**响应**:
+
+```json
+{
+  "snapshots": [
     {
-      "node_id": "role_actor_1",
-      "chapter": 1,
-      "model": "kimi-k2.5",
-      "prompt_tokens": 1000,
-      "completion_tokens": 500,
-      "total_tokens": 1500,
-      "ttf_ms": 500,
-      "tps": 50.0,
-      "duration_ms": 10000,
-      "api_latency_ms": 600,
-      "retry_count": 0,
-      "cost_usd": 0.015,
-      "timestamp": "2026-04-16T12:00:00"
-    }
-  ],
-  "per_chapter": [
-    {
+      "snapshot_id": "snap_001",
+      "created_at": "2026-04-19T10:00:00Z",
       "chapter_id": 1,
-      "total_nodes": 7,
-      "total_duration_ms": 70000,
-      "total_tokens": 10500,
-      "total_retries": 0,
-      "total_cost_usd": 0.105,
-      "avg_tps": 50.0
+      "node_id": "role_actor_5",
+      "description": "自动保存"
     }
-  ],
-  "summary": {
-    "total_chapters": 3,
-    "total_duration_min": 5.2,
-    "total_tokens": 15000,
-    "total_cost_usd": 0.85,
-    "avg_chapter_time_min": 1.73
-  }
-}
-```
-- **错误响应**:
-  - `500`: 服务器内部错误（获取性能指标失败）
-
-### 配置信息
-- **端点**: `GET /api/config`
-- **描述**: 获取当前配置信息（动态从 config.yaml 读取）
-- **响应**:
-```json
-{
-  "api": {
-    "model": "kimi-k2.5",
-    "base_url": "https://api.moonshot.cn/v1",
-    "timeout": 60,
-    "max_retries": 3
-  },
-  "generation": {
-    "temperature": 1,
-    "top_p": 0.95,
-    "max_tokens": 4096
-  },
-  "memory": {
-    "truncation": 8000
-  },
-  "ui": {
-    "theme": "dark",
-    "font_size": 14
-  },
-  "performance": {
-    "cost_alert_usd": 5
-  }
+  ]
 }
 ```
 
-### 保存配置
-- **端点**: `POST /api/config`
-- **描述**: 保存配置到 config.yaml 并重新加载（动态生效，无需重启）
-- **请求体**:
-```json
-{
-  "api": {
-    "model": "kimi-k2"
-  },
-  "generation": {
-    "temperature": 0.8
-  },
-  "memory": {
-    "truncation": 8000
-  },
-  "ui": {
-    "theme": "light"
-  },
-  "performance": {
-    "cost_alert_usd": 10
-  }
-}
-```
-- **响应**:
-```json
-{
-  "status": "saved",
-  "message": "Configuration saved successfully",
-  "updated_keys": ["api.model", "generation.temperature"]
-}
-```
-- **错误响应**:
-  - `400`: 配置无效（如 temperature 超出范围）
-  - `500`: 服务器内部错误（保存失败）
+#### 恢复快照
 
-### 调试日志操作
-- **端点**: `POST /api/debuglog`
-- **描述**: 执行调试日志相关操作（获取内容、清除、写入、设置调试模式）
-- **请求体**:
-```json
-{
-  "action": "get",
-  "message": "自定义日志消息",
-  "level": "INFO",
-  "enabled": true
-}
+```http
+POST /api/snapshots/{snapshot_id}/restore
 ```
-- **操作类型说明**:
-  - `get`: 获取调试日志内容
-  - `clear`: 清空调试日志
-  - `write`: 写入调试日志（需要提供 message 和可选的 level）
-  - `set_mode`: 设置调试模式（需要提供 enabled）
-- **响应**:
+
+恢复到指定快照状态。
+
+**响应**:
+
 ```json
 {
   "status": "success",
-  "message": "Debug log read successfully",
-  "content": "日志内容...",
-  "exists": true,
-  "debug_mode": true
+  "snapshot_id": "snap_001",
+  "restored_to": {
+    "chapter_id": 1,
+    "node_id": "role_actor_5"
+  }
 }
 ```
-- **错误响应**:
-  - `400`: 请求参数无效
-  - `500`: 服务器内部错误
+
+---
 
 ## WebSocket API
 
-### 流式连接
-- **端点**: `WS /api/stream`
-- **描述**: 实时接收日志、进度、性能数据
+### 连接
 
-### 消息类型
+```
+ws://localhost:8000/api/stream
+```
 
-#### 日志消息
+### 消息格式
+
+所有消息使用 JSON 格式。
+
+### 客户端消息
+
+#### 订阅事件
+
 ```json
 {
-  "type": "log",
+  "type": "subscribe",
+  "events": ["token", "progress", "status", "complete"]
+}
+```
+
+#### 发送干预指令
+
+```json
+{
+  "type": "intervention",
+  "action": "accept",
+  "chapter_id": 1,
+  "node_id": "role_actor_3"
+}
+```
+
+### 服务端消息
+
+#### Token 消息
+
+流式生成的 token。
+
+```json
+{
+  "type": "token",
   "data": {
-    "timestamp": "2026-04-09T12:00:00",
-    "level": "INFO",
-    "chapter": 1,
-    "node": "DIRECTOR_GENERAL",
-    "message": "Node started"
+    "content": "生成的文本片段",
+    "chapter_id": 1,
+    "node_id": "role_actor_3",
+    "timestamp": "2026-04-19T10:00:00.123Z"
   }
 }
 ```
 
 #### 进度消息
+
+生成进度更新。
+
 ```json
 {
   "type": "progress",
   "data": {
-    "current": 1,
-    "total": 3,
-    "percentage": 33.3,
-    "current_node": "CHAPTER_1",
-    "estimated_remaining_cost": 0.5
+    "chapter_id": 1,
+    "node_id": "role_actor_3",
+    "chapter_progress": 45,
+    "overall_progress": 23,
+    "current_node_type": "dialogue",
+    "target_character": "主角A"
   }
 }
-```
-
-#### Token 消息
-```json
-{
-  "type": "token",
-  "data": {
-    "chapter": 1,
-    "node": "node_1",
-    "token": "这是"
-  }
-}
-```
-
-#### 性能消息
-```json
-{
-  "type": "performance",
-  "data": {
-    "per_node": [...],
-    "per_chapter": [...],
-    "summary": {...}
-  }
-}
-```
-
-#### Pong 响应
-```json
-{"type": "pong"}
 ```
 
 #### 状态消息
+
+生成状态变化。
+
 ```json
 {
   "type": "status",
   "data": {
-    "current_chapter": 1,
-    "current_node": "DIRECTOR_GENERAL",
-    "total_chapters": 3,
-    "is_running": true,
-    "is_paused": false,
-    "is_stopped": false
+    "status": "running",
+    "chapter_id": 1,
+    "node_id": "role_actor_3",
+    "timestamp": "2026-04-19T10:00:00Z"
+  }
+}
+```
+
+#### 审查消息
+
+需要人工干预。
+
+```json
+{
+  "type": "need_manual_review",
+  "data": {
+    "chapter_id": 1,
+    "node_id": "role_actor_3",
+    "content": "需要审查的内容",
+    "issues": ["角色行为不一致", "时间线错误"],
+    "suggestions": "建议修改为..."
   }
 }
 ```
 
 #### 完成消息
+
+生成完成。
+
 ```json
 {
   "type": "complete",
   "data": {
-    "message": "Generation completed",
-    "output_file": "E:\\dev-py\\novel\\output\\novel_20260409_220138.txt"
+    "chapter_id": 1,
+    "total_tokens": 5000,
+    "cost_usd": 0.05,
+    "duration_seconds": 120
   }
 }
 ```
+
+#### 错误消息
+
+发生错误。
+
+```json
+{
+  "type": "error",
+  "data": {
+    "error_code": "GENERATION_FAILED",
+    "message": "生成失败: API 超时",
+    "chapter_id": 1,
+    "node_id": "role_actor_3"
+  }
+}
+```
+
+---
+
+## 数据模型
+
+### 输入模型
+
+#### DirectorGeneralInput
+
+| 字段 | 类型 | 必填 | 描述 |
+|------|------|------|------|
+| theme | string | 是 | 小说主题 |
+| style | string | 是 | 写作风格 |
+| total_words | integer | 是 | 目标总字数 |
+| character_count | integer | 是 | 角色数量 |
+| genre | string | 是 | 文体类型 |
+
+#### DirectorChapterInput
+
+| 字段 | 类型 | 必填 | 描述 |
+|------|------|------|------|
+| chapter_id | integer | 是 | 章节ID |
+| director_general_output | object | 是 | 总导演输出 |
+| global_memory_snapshot | object | 是 | 全局记忆快照 |
+| genre | string | 是 | 文体类型 |
+
+### 输出模型
+
+#### DirectorGeneralOutput
+
+| 字段 | 类型 | 描述 |
+|------|------|------|
+| world_building | object | 世界观设定 |
+| writing_style | object | 写作风格 |
+| outline | array | 章节大纲列表 |
+| chapter_count | integer | 章节总数 |
+| characters | array | 角色列表 |
+| conflict_design | object | 冲突设计 |
+| foreshadowing | array | 伏笔列表 |
+| character_arcs | array | 角色弧光 |
+| tone | string | 整体基调 |
+| genre_specific | object | 文体特定配置 |
+
+#### RoleActorOutput
+
+| 字段 | 类型 | 描述 |
+|------|------|------|
+| generated_content | string | 生成的文本内容 |
+| state_change_report | object | 状态变化报告 |
+
+### 性能指标
+
+#### PerformanceMetrics
+
+| 字段 | 类型 | 描述 |
+|------|------|------|
+| ttf_ms | float | 首Token延迟（毫秒） |
+| tps | float | 生成速度（tokens/秒） |
+| api_latency_ms | float | API延迟（毫秒） |
+| prompt_tokens | integer | 输入Token数 |
+| completion_tokens | integer | 输出Token数 |
+| total_tokens | integer | 总Token数 |
+| cost_usd | float | 预估成本（美元） |
+
+---
+
+## 错误处理
+
+### HTTP 错误码
+
+| 状态码 | 描述 |
+|--------|------|
+| 200 | 成功 |
+| 400 | 请求参数错误 |
+| 422 | 验证错误 |
+| 500 | 服务器内部错误 |
+| 503 | 服务不可用 |
+
+### 错误响应格式
+
+```json
+{
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "请求参数验证失败",
+    "details": [
+      {
+        "field": "total_words",
+        "message": "必须大于0"
+      }
+    ]
+  }
+}
+```
+
+### 错误代码
+
+| 代码 | 描述 |
+|------|------|
+| VALIDATION_ERROR | 参数验证失败 |
+| GENERATION_IN_PROGRESS | 生成任务已在运行 |
+| NO_ACTIVE_GENERATION | 没有活动的生成任务 |
+| NODE_NOT_FOUND | 节点不存在 |
+| VERSION_NOT_FOUND | 版本不存在 |
+| SNAPSHOT_NOT_FOUND | 快照不存在 |
+| LLM_API_ERROR | LLM API 调用失败 |
+| RATE_LIMIT_ERROR | 速率限制 |
+
+---
+
+## 示例代码
+
+### Python 客户端
+
+```python
+import requests
+import websocket
+import json
+
+BASE_URL = "http://localhost:8000"
+WS_URL = "ws://localhost:8000/api/stream"
+
+# 启动生成
+def start_generation():
+    response = requests.post(f"{BASE_URL}/api/start", json={
+        "theme": "校园青春恋爱",
+        "style": "轻松",
+        "total_words": 10000,
+        "character_count": 2,
+        "genre": "novel"
+    })
+    return response.json()
+
+# WebSocket 连接
+def on_message(ws, message):
+    data = json.loads(message)
+    if data["type"] == "token":
+        print(f"Token: {data['data']['content']}")
+    elif data["type"] == "progress":
+        print(f"Progress: {data['data']['overall_progress']}%")
+    elif data["type"] == "complete":
+        print("Generation complete!")
+        ws.close()
+
+ws = websocket.WebSocketApp(WS_URL, on_message=on_message)
+ws.run_forever()
+```
+
+### JavaScript 客户端
+
+```javascript
+// 启动生成
+async function startGeneration() {
+  const response = await fetch('http://localhost:8000/api/start', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      theme: '校园青春恋爱',
+      style: '轻松',
+      total_words: 10000,
+      character_count: 2,
+      genre: 'novel'
+    })
+  });
+  return await response.json();
+}
+
+// WebSocket 连接
+const ws = new WebSocket('ws://localhost:8000/api/stream');
+
+ws.onmessage = (event) => {
+  const data = JSON.parse(event.data);
+  switch (data.type) {
+    case 'token':
+      console.log('Token:', data.data.content);
+      break;
+    case 'progress':
+      console.log('Progress:', data.data.overall_progress + '%');
+      break;
+    case 'complete':
+      console.log('Generation complete!');
+      ws.close();
+      break;
+  }
+};
+```
+
+### cURL 示例
+
+```bash
+# 启动生成
+curl -X POST http://localhost:8000/api/start \
+  -H "Content-Type: application/json" \
+  -d '{
+    "theme": "校园青春恋爱",
+    "style": "轻松",
+    "total_words": 10000,
+    "character_count": 2,
+    "genre": "novel"
+  }'
+
+# 查询状态
+curl http://localhost:8000/api/status
+
+# 暂停生成
+curl -X POST http://localhost:8000/api/pause
+
+# 重新生成节点
+curl -X POST http://localhost:8000/api/regenerate \
+  -H "Content-Type: application/json" \
+  -d '{"chapter_id": 1, "node_id": "role_actor_3"}'
+```
+
+---
+
+## 变更历史
+
+| 版本 | 日期 | 变更内容 |
+|------|------|----------|
+| 2.0.0 | 2026-04-19 | 重构后更新，添加快照管理、版本管理接口 |
+| 1.1.0 | 2026-04-15 | 添加 WebSocket 流式接口 |
+| 1.0.0 | 2026-04-01 | 初始版本 |

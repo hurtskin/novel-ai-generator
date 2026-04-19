@@ -1,14 +1,42 @@
 # 依赖注入容器使用指南
 
+> 本文档介绍 Novel AI Generator 依赖注入容器的使用方法
+> 版本: 2.0.0
+> 更新日期: 2026-04-19
+
+---
+
+## 目录
+
+1. [概述](#概述)
+2. [快速开始](#快速开始)
+3. [核心功能](#核心功能)
+4. [高级特性](#高级特性)
+5. [最佳实践](#最佳实践)
+6. [故障排除](#故障排除)
+
+---
+
 ## 概述
 
 本项目实现了功能完善的依赖注入容器，支持：
+
 - 接口到实现的绑定
 - 构造函数自动注入
 - 多种生命周期管理（Transient、Singleton、Scoped）
 - 循环依赖检测
 - 命名注册
 - 工厂函数注册
+
+### 架构位置
+
+```
+core/
+├── container.py           # 容器核心实现
+└── container_config.py    # 容器配置和初始化
+```
+
+---
 
 ## 快速开始
 
@@ -21,34 +49,42 @@ from core.container import Container, Scope
 container = Container()
 ```
 
-### 2. 注册依赖
+### 2. 定义接口
 
 ```python
 from typing import Protocol
 from abc import abstractmethod
 
-# 定义接口
 class ILogger(Protocol):
     @abstractmethod
     def log(self, message: str) -> None:
         pass
+```
 
-# 实现类
+### 3. 实现类
+
+```python
 class ConsoleLogger:
     def log(self, message: str) -> None:
         print(f"[LOG] {message}")
+```
 
+### 4. 注册依赖
+
+```python
 # 注册实现
 container.register(ILogger, ConsoleLogger)
 ```
 
-### 3. 解析依赖
+### 5. 解析依赖
 
 ```python
 # 解析依赖
 logger = container.resolve(ILogger)
-logger.log("Hello, DI!")
+logger.log("Hello, DI!")  # 输出: [LOG] Hello, DI!
 ```
+
+---
 
 ## 核心功能
 
@@ -57,6 +93,7 @@ logger.log("Hello, DI!")
 容器支持三种生命周期：
 
 #### Transient（瞬态）
+
 每次解析都创建新实例（默认）：
 
 ```python
@@ -65,9 +102,11 @@ container.register(ILogger, ConsoleLogger, Scope.TRANSIENT)
 logger1 = container.resolve(ILogger)
 logger2 = container.resolve(ILogger)
 # logger1 和 logger2 是不同的实例
+assert logger1 is not logger2
 ```
 
 #### Singleton（单例）
+
 整个容器共享一个实例：
 
 ```python
@@ -76,9 +115,11 @@ container.register(ILogger, ConsoleLogger, Scope.SINGLETON)
 logger1 = container.resolve(ILogger)
 logger2 = container.resolve(ILogger)
 # logger1 和 logger2 是相同的实例
+assert logger1 is logger2
 ```
 
 #### Scoped（作用域）
+
 在同一线程内共享实例：
 
 ```python
@@ -87,6 +128,7 @@ container.register(ILogger, ConsoleLogger, Scope.SCOPED)
 logger1 = container.resolve(ILogger)
 logger2 = container.resolve(ILogger)
 # logger1 和 logger2 是相同的实例（同一线程）
+assert logger1 is logger2
 ```
 
 ### 构造函数自动注入
@@ -112,6 +154,7 @@ container.register(IDatabase, Database)
 
 # 解析 - 自动注入 ILogger
 db = container.resolve(IDatabase)
+# db.logger 已经被自动注入
 ```
 
 ### 命名注册
@@ -159,6 +202,8 @@ container.register_factory(IDatabase, create_database)
 logger_instance = ConsoleLogger()
 container.register_instance(ILogger, logger_instance)
 ```
+
+---
 
 ## 高级特性
 
@@ -245,190 +290,207 @@ provider = container.build_provider()
 logger = provider.resolve(ILogger)
 ```
 
-## 异常处理
-
-容器定义了以下异常类型：
-
-- `ContainerError`: 所有容器异常的基类
-- `DependencyNotFoundError`: 依赖未注册
-- `CircularDependencyError`: 发现循环依赖
-- `ResolutionError`: 解析失败
-- `RegistrationError`: 注册失败
-
-```python
-from core.container import (
-    DependencyNotFoundError,
-    CircularDependencyError,
-    ResolutionError
-)
-
-try:
-    service = container.resolve(IService)
-except DependencyNotFoundError:
-    print("依赖未找到")
-except CircularDependencyError as e:
-    print(f"循环依赖: {e}")
-except ResolutionError as e:
-    print(f"解析失败: {e}")
-```
+---
 
 ## 最佳实践
 
-### 1. 面向接口编程
+### 1. 项目中的使用模式
 
-始终定义接口（Protocol），然后注册实现：
+本项目使用容器的方式：
 
 ```python
-# 好的做法
-class IEmailService(Protocol):
-    def send(self, to: str, subject: str, body: str) -> None:
-        pass
+# core/container_config.py
+from core.container import Container, Scope
+from interfaces.llm_client import LLMClient, LLMClientFactory
+from interfaces.memory import MemoryStore
+# ... 其他接口
 
-class SmtpEmailService:
-    def send(self, to: str, subject: str, body: str) -> None:
-        # SMTP 实现
-        pass
+def configure_container(container: Container) -> Container:
+    """配置容器绑定"""
+    
+    # 注册 LLM 客户端工厂
+    from implementations.llm.factory import LLMClientFactoryImpl
+    container.register(LLMClientFactory, LLMClientFactoryImpl, Scope.SINGLETON)
+    
+    # 注册记忆存储
+    from implementations.memory.simple_memory_store import SimpleMemoryStore
+    container.register(MemoryStore, SimpleMemoryStore, Scope.SINGLETON)
+    
+    # ... 其他注册
+    
+    return container
 
-container.register(IEmailService, SmtpEmailService)
+def initialize_container() -> Container:
+    """初始化并返回配置好的容器"""
+    container = Container()
+    configure_container(container)
+    return container
 ```
 
-### 2. 生命周期选择
-
-- **Transient**: 无状态服务，每次需要新实例
-- **Singleton**: 有状态共享服务，如配置、连接池
-- **Scoped**: 请求级别的服务，如数据库会话
-
-### 3. 避免循环依赖
-
-如果检测到循环依赖，考虑重构：
+### 2. 在 FastAPI 中使用
 
 ```python
-# 不好的做法 - 循环依赖
-class ServiceA:
-    def __init__(self, b: 'ServiceB'):
+# api/dependencies.py
+from fastapi import Request
+from core.container import Container
+
+def get_container(request: Request) -> Container:
+    """从请求状态获取容器"""
+    return request.app.state.container
+
+def get_llm_client(container: Container = Depends(get_container)) -> LLMClient:
+    """获取 LLM 客户端"""
+    factory = container.resolve(LLMClientFactory)
+    config = container.resolve(ConfigProvider)
+    return factory.create_client(config.get("api"))
+```
+
+### 3. 在 LLM 节点中使用
+
+```python
+# core/nodes/role_actor.py
+from interfaces.llm_client import LLMClient
+from interfaces.memory import MemoryStore
+
+class RoleActorNode:
+    def __init__(
+        self,
+        llm_client: LLMClient,
+        memory_store: MemoryStore
+    ):
+        self.llm_client = llm_client
+        self.memory_store = memory_store
+    
+    def execute(self, input_data: RoleActorInput) -> RoleActorOutput:
+        # 使用注入的依赖
+        memory = self.memory_store.get_character_memory(
+            input_data.target_character
+        )
+        response = self.llm_client.chat(messages=[...])
+        # ...
+```
+
+### 4. 测试中使用 Mock
+
+```python
+# tests/test_nodes.py
+import pytest
+from unittest.mock import Mock
+from core.container import Container
+
+def test_role_actor_with_mock():
+    """使用 Mock 测试 RoleActor 节点"""
+    container = Container()
+    
+    # 创建 Mock
+    mock_llm = Mock(spec=LLMClient)
+    mock_llm.chat.return_value = ChatResponse(
+        content="生成的内容",
+        usage=TokenUsage(100, 50, 150),
+        performance=PerformanceMetrics(0, 0, 0, 0),
+        model="mock"
+    )
+    
+    mock_memory = Mock(spec=MemoryStore)
+    mock_memory.get_character_memory.return_value = CharacterMemory(
+        character_name="主角",
+        memories=[],
+        emotions=[],
+        relationships={}
+    )
+    
+    # 注册 Mock
+    container.register_instance(LLMClient, mock_llm)
+    container.register_instance(MemoryStore, mock_memory)
+    
+    # 测试
+    node = RoleActorNode(
+        llm_client=container.resolve(LLMClient),
+        memory_store=container.resolve(MemoryStore)
+    )
+    
+    result = node.execute(input_data)
+    
+    # 验证
+    assert result.generated_content == "生成的内容"
+    mock_llm.chat.assert_called_once()
+```
+
+---
+
+## 故障排除
+
+### 异常处理
+
+容器定义了以下异常类型：
+
+| 异常 | 描述 | 解决方案 |
+|------|------|----------|
+| `DependencyNotFoundError` | 依赖未注册 | 检查注册代码，确保先注册再解析 |
+| `CircularDependencyError` | 发现循环依赖 | 重构代码，使用接口打破循环 |
+| `ResolutionError` | 解析失败 | 检查构造函数参数是否都可解析 |
+| `RegistrationError` | 注册失败 | 检查接口和实现类定义 |
+
+### 常见问题
+
+#### Q: 解析时提示依赖未找到
+
+```python
+# 错误：先解析后注册
+logger = container.resolve(ILogger)  # DependencyNotFoundError
+container.register(ILogger, ConsoleLogger)
+
+# 正确：先注册后解析
+container.register(ILogger, ConsoleLogger)
+logger = container.resolve(ILogger)
+```
+
+#### Q: 循环依赖如何解决
+
+```python
+# 错误：直接相互依赖
+class A:
+    def __init__(self, b: B):  # B 依赖 A
         self.b = b
 
-class ServiceB:
-    def __init__(self, a: ServiceA):
+class B:
+    def __init__(self, a: A):  # A 依赖 B
         self.a = a
 
-# 好的做法 - 使用事件或中介者
-class ServiceA:
-    def __init__(self, event_bus: IEventBus):
-        self.event_bus = event_bus
+# 解决：使用接口打破循环
+class IServiceA(Protocol):
+    pass
 
-class ServiceB:
-    def __init__(self, event_bus: IEventBus):
-        self.event_bus = event_bus
+class IServiceB(Protocol):
+    pass
+
+class A:
+    def __init__(self, b: IServiceB):  # 依赖接口
+        self.b = b
+
+class B:
+    def __init__(self, a: IServiceA):  # 依赖接口
+        self.a = a
 ```
 
-### 4. 模块组织
-
-将相关服务的注册组织到模块中：
+#### Q: 如何调试依赖解析
 
 ```python
-class ServicesModule:
-    def __init__(self, container: Container):
-        self.container = container
-    
-    def configure(self):
-        self.container \
-            .register(ILogger, ConsoleLogger, Scope.SINGLETON) \
-            .register(IDatabase, Database, Scope.SCOPED) \
-            .register(IEmailService, SmtpEmailService)
-
-# 使用
-module = ServicesModule(container)
-module.configure()
+# 打印容器中的所有注册
+interfaces = container.get_registered_interfaces()
+for interface in interfaces:
+    print(f"Interface: {interface.__name__}")
+    registrations = container._registrations.get(interface, [])
+    for reg in registrations:
+        print(f"  -> {reg.implementation.__name__} ({reg.scope.name})")
 ```
 
-## 完整示例
+---
 
-```python
-from typing import Protocol
-from abc import abstractmethod
-from core.container import Container, Scope, get_global_container
+## 变更历史
 
-# 定义接口
-class ILogger(Protocol):
-    @abstractmethod
-    def log(self, message: str) -> None:
-        pass
-
-class IDatabase(Protocol):
-    @abstractmethod
-    def query(self, sql: str) -> list:
-        pass
-
-class IEmailService(Protocol):
-    @abstractmethod
-    def send(self, to: str, subject: str, body: str) -> None:
-        pass
-
-# 实现类
-class ConsoleLogger:
-    def log(self, message: str) -> None:
-        print(f"[LOG] {message}")
-
-class Database:
-    def __init__(self, logger: ILogger):
-        self.logger = logger
-    
-    def query(self, sql: str) -> list:
-        self.logger.log(f"Query: {sql}")
-        return []
-
-class EmailService:
-    def __init__(self, logger: ILogger, db: IDatabase):
-        self.logger = logger
-        self.db = db
-    
-    def send(self, to: str, subject: str, body: str) -> None:
-        self.logger.log(f"Sending email to {to}")
-        self.db.query("INSERT INTO emails ...")
-
-# 配置容器
-def configure_services(container: Container):
-    container \
-        .register(ILogger, ConsoleLogger, Scope.SINGLETON) \
-        .register(IDatabase, Database, Scope.SCOPED) \
-        .register(IEmailService, EmailService, Scope.TRANSIENT)
-
-# 使用
-def main():
-    container = get_global_container()
-    configure_services(container)
-    
-    # 解析服务
-    email_service = container.resolve(IEmailService)
-    email_service.send("user@example.com", "Hello", "World")
-
-if __name__ == "__main__":
-    main()
-```
-
-## 测试支持
-
-在测试中使用容器：
-
-```python
-import unittest
-from core.container import Container, Scope, reset_global_container
-
-class TestService(unittest.TestCase):
-    def setUp(self):
-        self.container = Container()
-        # 或者使用新的全局容器
-        reset_global_container()
-        self.container = get_global_container()
-    
-    def test_service(self):
-        # 注册 mock 实现
-        self.container.register(ILogger, MockLogger)
-        
-        # 测试
-        service = self.container.resolve(IService)
-        result = service.do_work()
-        
-        self.assertEqual(result, "expected")
-```
+| 版本 | 日期 | 变更内容 |
+|------|------|----------|
+| 2.0.0 | 2026-04-19 | 重构后更新，添加 Scoped 生命周期支持 |
+| 1.1.0 | 2026-04-15 | 添加全局容器和链式注册 |
+| 1.0.0 | 2026-04-01 | 初始版本 |
