@@ -32,6 +32,7 @@ class GenerationConfig:
     max_tokens: int
     mock_mode: bool
     debug: bool
+    max_retries: int = 3
 
 
 @dataclass

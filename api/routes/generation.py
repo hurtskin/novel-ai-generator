@@ -383,6 +383,7 @@ async def retry_node(
     state: GenerationState = Depends(get_generation_state),
     retry_service: NodeRetryService = Depends(get_node_retry_service),
     state_manager: StateManagerService = Depends(get_state_manager_service),
+    config_provider: ConfigProvider = Depends(get_config_provider),
 ) -> NodeRetryResponse:
     """
     重试当前节点
@@ -420,15 +421,19 @@ async def retry_node(
     try:
         # 执行重试（记录重试次数）
         result = await retry_service.retry_node(chapter_id, node_id)
-        
+
         # 触发实际重试逻辑（关键！这会设置 retry_current=True 并恢复生成流程）
         state_manager.retry_current_node()
-        
+
         # 清除待重试状态
         retry_service.clear_pending_retry()
-        
+
+        # 从配置读取最大重试次数
+        api_config = config_provider.get_api_config()
+        max_retries = getattr(api_config, 'max_retries', 3)
+
         # 检查是否还可以继续重试
-        can_retry = retry_service.can_retry(chapter_id, node_id, max_retries=3)
+        can_retry = retry_service.can_retry(chapter_id, node_id, max_retries=max_retries)
         
         logger.info(
             f"Node retry: chapter={chapter_id}, node={node_id}, "

@@ -185,12 +185,14 @@ class YamlConfigProvider(ConfigProvider):
     def get_generation_config(self) -> GenerationConfig:
         """获取生成配置"""
         gen_config = self._config.get("generation", {})
+        api_config = self._config.get("api", {})
         return GenerationConfig(
             temperature=gen_config.get("temperature", 0.7),
             top_p=gen_config.get("top_p", 0.9),
             max_tokens=gen_config.get("max_tokens", 4096),
             mock_mode=gen_config.get("mock_mode", False),
             debug=gen_config.get("debug", True),
+            max_retries=api_config.get("max_retries", 3),
         )
 
     def get_memory_config(self) -> MemoryConfig:

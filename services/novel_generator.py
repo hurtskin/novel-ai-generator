@@ -797,13 +797,8 @@ class NovelGenerator(NovelGeneratorService):
                 # 保存到滑动窗口
                 window_contents[sequence.get_current_index() - 1] = node_result['content']
                 chapter_content += node_result['content'] + "\n\n"
-                
-                # 实时保存到文件
-                if self.file_output:
-                    await self.file_output.append_content(
-                        file_path=f"./output/{self._current_task_id}.txt",
-                        content=node_result['content'],
-                    )
+
+                # RAG 保存
                 if self.rag:
                     try:
                         await self.rag.add_document(
@@ -873,7 +868,10 @@ class NovelGenerator(NovelGeneratorService):
                 rag_context=rag_context,
                 context=context,
             )
-            
+
+            # 保存版本到滑动窗口
+            self.state_manager.add_node_version(sequence.get_current_index() - 1, content)
+
             # 4. 滑动窗口自检
             self._current_node = f"SELF_CHECK_{node_id}"
             window_content = self._build_window_content(
@@ -967,14 +965,18 @@ class NovelGenerator(NovelGeneratorService):
                     # 选择历史版本
                     selected_version_idx = sw.get('selected_version_idx', 0)
                     selected_content = node_versions[selected_version_idx] if node_versions else content
-                    
+
                     # 清空版本历史
                     self.state_manager.clear_node_versions(current_index)
-                    
+
                     # 重置反馈和重试计数
                     self.state_manager.update_state({'chapter_feedback': ''})
                     self.state_manager.reset_retry_state()
-                    
+                    sequence.reset_retry_count()
+
+                    # 关键修复：清除 retry_index，确保进入下一个节点
+                    sequence.retry_index = None
+
                     logger.info(f"Manual version {selected_version_idx} selected for node {node_id}")
                     return {'passed': True, 'content': selected_content}
             
