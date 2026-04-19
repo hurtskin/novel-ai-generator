@@ -611,10 +611,20 @@ class NodeRetryResult:
     """节点重试结果数据类"""
     success: bool
     chapter_id: int
-    node_id: str
+    node_id: int
     retry_count: int
     message: str
     previous_error: Optional[str] = None
+
+
+@dataclass
+class PendingRetryInfo:
+    """待重试节点信息数据类"""
+    chapter_id: int
+    node_id: int
+    node_index: int
+    versions: List[Dict[str, Any]]
+    timestamp: str
 
 
 class NodeRetryService(ABC):
@@ -632,7 +642,7 @@ class NodeRetryService(ABC):
     async def retry_node(
         self,
         chapter_id: int,
-        node_id: str,
+        node_id: int,
     ) -> NodeRetryResult:
         """
         重试指定节点
@@ -650,7 +660,7 @@ class NodeRetryService(ABC):
     def get_retry_count(
         self,
         chapter_id: int,
-        node_id: str,
+        node_id: int,
     ) -> int:
         """
         获取节点重试次数
@@ -668,7 +678,7 @@ class NodeRetryService(ABC):
     def can_retry(
         self,
         chapter_id: int,
-        node_id: str,
+        node_id: int,
         max_retries: int = 3,
     ) -> bool:
         """
@@ -688,7 +698,7 @@ class NodeRetryService(ABC):
     def clear_retry_history(
         self,
         chapter_id: int,
-        node_id: str,
+        node_id: int,
     ) -> bool:
         """
         清除重试历史
@@ -706,7 +716,7 @@ class NodeRetryService(ABC):
     def record_failure(
         self,
         chapter_id: int,
-        node_id: str,
+        node_id: int,
         error_message: str,
     ) -> None:
         """
@@ -716,6 +726,45 @@ class NodeRetryService(ABC):
             chapter_id: 章节ID
             node_id: 节点ID
             error_message: 错误信息
+        """
+        pass
+
+    @abstractmethod
+    def set_pending_retry(
+        self,
+        chapter_id: int,
+        node_id: int,
+        node_index: int,
+        versions: List[Dict[str, Any]],
+    ) -> None:
+        """
+        设置待重试节点（人工干预时调用）
+        
+        当节点超过最大重试次数触发人工干预时，将失败节点信息存储，
+        供后续重试端点查询使用。
+        
+        Args:
+            chapter_id: 章节ID
+            node_id: 节点ID
+            node_index: 节点索引
+            versions: 节点版本历史
+        """
+        pass
+
+    @abstractmethod
+    def get_pending_retry(self) -> Optional[PendingRetryInfo]:
+        """
+        获取待重试节点信息（重试端点调用）
+        
+        Returns:
+            Optional[PendingRetryInfo]: 待重试节点信息，如果没有则返回 None
+        """
+        pass
+
+    @abstractmethod
+    def clear_pending_retry(self) -> None:
+        """
+        清除待重试状态（重试成功后调用）
         """
         pass
 
@@ -1214,8 +1263,71 @@ class GenerationPipelineService(ABC):
         pass
 
 @dataclass
+class Event:
+    """事件基类 - 用于事件总线"""
+    type: str  # log, progress, status, complete, error, need_manual_review, token, metrics
+    data: Dict[str, Any]
+    timestamp: str = None
+    
+    def __post_init__(self):
+        if self.timestamp is None:
+            self.timestamp = datetime.now().isoformat()
+
+
+class EventBus(ABC):
+    """
+    事件总线接口
+    
+    职责：
+    - 提供事件的发布和订阅机制
+    - 实现业务逻辑与通信层的解耦
+    - 支持通配符订阅
+    """
+    
+    @abstractmethod
+    def subscribe(self, event_type: str, handler: Callable[[Event], None]) -> str:
+        """
+        订阅事件
+        
+        Args:
+            event_type: 事件类型，使用 "*" 订阅所有事件
+            handler: 事件处理函数
+            
+        Returns:
+            str: 订阅ID，用于取消订阅
+        """
+        pass
+    
+    @abstractmethod
+    def unsubscribe(self, subscription_id: str) -> bool:
+        """
+        取消订阅
+        
+        Args:
+            subscription_id: 订阅ID
+            
+        Returns:
+            bool: 是否成功取消
+        """
+        pass
+    
+    @abstractmethod
+    def publish(self, event: Event) -> int:
+        """
+        发布事件
+        
+        Args:
+            event: 事件对象
+            
+        Returns:
+            int: 通知的订阅者数量
+        """
+        pass
+
+
+@dataclass
 class WebSocketMessage:
-    """WebSocket 消息"""
+    """WebSocket 消息 (兼容旧接口)"""
     type: str  # token, progress, status, log, complete, error, need_manual_review
     data: Dict[str, Any]
     timestamp: str = None

@@ -23,7 +23,7 @@ from services.interfaces import (
     PerformanceMetricsService,
     ConfigManagerService,
     DebugLogService,
-    WebSocketBroadcastService,
+    EventBus,
     FileOutputService,
     RAGRetrievalService,
     NovelGeneratorService,
@@ -44,9 +44,10 @@ from services.node_regenerate import NodeRegenerateManager
 from services.performance_metrics import PerformanceMetricsCollector
 from services.config_manager import ConfigManager
 from services.debug_log import DebugLogManager
-from services.websocket_broadcast import WebSocketBroadcastManager
+from services.event_bus import InMemoryEventBus
 from services.file_output import FileOutputManager
 from services.rag_retrieval import RAGRetrievalManager
+from services.state_manager import StateManager
 
 
 
@@ -196,14 +197,14 @@ def initialize_container(
         )
         logger.info("Registered DebugLogService -> DebugLogManager (Singleton)")
         
-        # 13. 注册 WebSocketBroadcastService (Singleton)
-        # WebSocketBroadcastManager 管理 WebSocket 连接，使用单例模式
+        # 13. 注册 EventBus (Singleton)
+        # InMemoryEventBus 提供事件发布订阅机制，使用单例模式
         container.register(
-            WebSocketBroadcastService,
-            WebSocketBroadcastManager,
+            EventBus,
+            InMemoryEventBus,
             scope=Scope.SINGLETON
         )
-        logger.info("Registered WebSocketBroadcastService -> WebSocketBroadcastServiceImpl (Singleton)")
+        logger.info("Registered EventBus -> InMemoryEventBus (Singleton)")
 
         # 14. 注册 FileOutputService (Singleton)
         # FileOutputManager 管理文件输出，使用单例模式
@@ -222,9 +223,21 @@ def initialize_container(
             scope=Scope.SINGLETON
         )
         logger.info("Registered RAGRetrievalService -> RAGRetrievalManager (Singleton)")
+
+        # 16. 注册 StateManagerService (Singleton)
+        # StateManager 管理生成状态，使用单例模式
+        container.register_factory(
+            StateManagerService,
+            lambda c: StateManager(
+                storage=c.resolve(StorageBackend),
+                observability=c.resolve(ObservabilityBackend),
+            ),
+            scope=Scope.SINGLETON
+        )
+        logger.info("Registered StateManagerService -> StateManager (Singleton)")
         
-        # 16. 注册 NovelGeneratorService (Singleton)
-        # NovelGeneratorServiceImpl 管理小说生成，使用单例模式
+        # 17. 注册 NovelGeneratorService (Singleton)
+        # NovelGenerator 管理小说生成，使用单例模式
         container.register_factory(
             NovelGeneratorService,
             lambda c: NovelGenerator(
@@ -232,10 +245,11 @@ def initialize_container(
                 memory_store=c.resolve(MemoryStore),
                 observability=c.resolve(ObservabilityBackend),
                 config_provider=c.resolve(ConfigProvider),
-                websocket_service=c.resolve(WebSocketBroadcastService),
+                event_bus=c.resolve(EventBus),
                 file_output_service=c.resolve(FileOutputService),
                 rag_service=c.resolve(RAGRetrievalService),
                 state_manager=c.resolve(StateManagerService),
+                node_retry_service=c.resolve(NodeRetryService),
             ),
             scope=Scope.SINGLETON
         )
@@ -337,14 +351,14 @@ def initialize_container_with_rag(
         )
         logger.info("Registered DebugLogService -> DebugLogManager (Singleton)")
 
-        # 注册 WebSocketBroadcastService (Singleton)
-        # WebSocketBroadcastManager 管理 WebSocket 连接，使用单例模式
+        # 注册 EventBus (Singleton)
+        # InMemoryEventBus 提供事件发布订阅机制，使用单例模式
         container.register(
-            WebSocketBroadcastService,
-            WebSocketBroadcastManager,
+            EventBus,
+            InMemoryEventBus,
             scope=Scope.SINGLETON
         )
-        logger.info("Registered WebSocketBroadcastService -> WebSocketBroadcastManager (Singleton)")
+        logger.info("Registered EventBus -> InMemoryEventBus (Singleton)")
 
         # 注册 FileOutputService (Singleton)
         # FileOutputManager 管理文件输出，使用单例模式
@@ -396,6 +410,18 @@ def initialize_container_with_rag(
         )
         logger.info("Registered RAGRetrievalService -> RAGRetrievalManager (Singleton)")
 
+        # 注册 StateManagerService (Singleton)
+        # StateManager 管理生成状态，使用单例模式
+        container.register_factory(
+            StateManagerService,
+            lambda c: StateManager(
+                storage=c.resolve(StorageBackend),
+                observability=c.resolve(ObservabilityBackend),
+            ),
+            scope=Scope.SINGLETON
+        )
+        logger.info("Registered StateManagerService -> StateManager (Singleton)")
+
         # 注册 NovelGeneratorService (Singleton)
         # NovelGenerator 管理小说生成，使用单例模式
         container.register_factory(
@@ -405,10 +431,11 @@ def initialize_container_with_rag(
                 memory_store=c.resolve(MemoryStore),
                 observability=c.resolve(ObservabilityBackend),
                 config_provider=c.resolve(ConfigProvider),
-                websocket_service=c.resolve(WebSocketBroadcastService),
+                event_bus=c.resolve(EventBus),
                 file_output_service=c.resolve(FileOutputService),
                 rag_service=c.resolve(RAGRetrievalService),
                 state_manager=c.resolve(StateManagerService),
+                node_retry_service=c.resolve(NodeRetryService),
             ),
             scope=Scope.SINGLETON
         )

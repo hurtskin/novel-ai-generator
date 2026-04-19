@@ -279,11 +279,27 @@ export class ApiClient {
       this.listeners.set(event, new Set());
     }
     this.listeners.get(event)!.add(callback);
-    return () => this.listeners.get(event)?.delete(callback);
+    console.log(`[ApiClient] Subscribed to event: ${event}, total listeners: ${this.listeners.get(event)!.size}`);
+    return () => {
+      this.listeners.get(event)?.delete(callback);
+      console.log(`[ApiClient] Unsubscribed from event: ${event}`);
+    };
   }
 
   private emit(event: string, data: any): void {
-    this.listeners.get(event)?.forEach((cb) => cb(data));
+    const listeners = this.listeners.get(event);
+    console.log(`[ApiClient] Emitting event: ${event}, listeners: ${listeners?.size || 0}`);
+    if (listeners) {
+      listeners.forEach((cb) => {
+        try {
+          cb(data);
+        } catch (e) {
+          console.error(`[ApiClient] Error in event listener for ${event}:`, e);
+        }
+      });
+    } else {
+      console.log(`[ApiClient] No listeners for event: ${event}`);
+    }
   }
 }
 

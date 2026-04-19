@@ -34,6 +34,23 @@ logger = logging.getLogger(__name__)
 # 安全方案
 security = HTTPBearer(auto_error=False)
 
+# 模块级别的容器实例（用于后台任务）
+_container_instance: Optional[Container] = None
+
+
+def set_container_instance(container: Container) -> None:
+    """
+    设置模块级别的容器实例
+    
+    用于后台任务获取容器，确保使用同一个 EventBus 实例
+    
+    Args:
+        container: 依赖注入容器实例
+    """
+    global _container_instance
+    _container_instance = container
+    logger.info(f"Container instance set: {id(container)}")
+
 
 def get_container(request: Request) -> Container:
     """

@@ -132,6 +132,24 @@ export const App: React.FC = () => {
       }
     });
 
+    const unsubNeedManualReview = apiClient.on('need_manual_review', (data: any) => {
+      console.log('[App] need_manual_review event received:', data);
+      console.log('[App] Setting intervention data:', {
+        needIntervention: true,
+        versions: data.versions || [],
+        nodeId: data.node_id || '',
+        chapterId: data.chapter || 0,
+      });
+      setInterventionData({
+        needIntervention: true,
+        versions: data.versions || [],
+        nodeId: data.node_id || '',
+        chapterId: data.chapter || 0,
+      });
+      console.log('[App] Switching to intervention panel');
+      setSelectedPanel('intervention');
+    });
+
     const unsubComplete = apiClient.on('complete', () => {
       setProgress({
         status: 'completed',
@@ -180,6 +198,7 @@ export const App: React.FC = () => {
       unsubTotalMetric();
       unsubProgress();
       unsubStatus();
+      unsubNeedManualReview();
       unsubComplete();
       unsubChat();
       unsubMemory();

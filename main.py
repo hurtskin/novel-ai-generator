@@ -91,6 +91,17 @@ def initialize_application() -> Any:
     # 打印依赖映射
     print_dependency_mappings(container)
     
+    # 设置模块级别的容器实例（供后台任务使用）
+    from api.dependencies import set_container_instance
+    set_container_instance(container)
+    
+    # 初始化 WebSocket 连接管理器（订阅 EventBus 事件）
+    from api.routes.websocket import initialize_connection_manager
+    from services.interfaces import EventBus
+    event_bus = container.resolve(EventBus)
+    initialize_connection_manager(event_bus)
+    logger.info("WebSocket connection manager initialized")
+    
     # 创建并配置 FastAPI 应用
     from api.app import create_app
     app = create_app()

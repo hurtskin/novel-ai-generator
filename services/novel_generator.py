@@ -42,9 +42,12 @@ from services.interfaces import (
     GenerationStatus,
     ChapterResult,
     GenerationError,
-    WebSocketBroadcastService,
+    EventBus,
+    Event,
     FileOutputService,
-    RAGRetrievalService
+    RAGRetrievalService,
+    StateManagerService,
+    NodeRetryService,
 )
 
 logger = logging.getLogger(__name__)
@@ -77,10 +80,11 @@ class NovelGenerator(NovelGeneratorService):
         memory_store: MemoryStore,
         observability: ObservabilityBackend,
         config_provider: ConfigProvider,
-        websocket_service: WebSocketBroadcastService,
+        event_bus: EventBus,
         file_output_service: FileOutputService,
         rag_service: RAGRetrievalService,
         state_manager: StateManagerService,
+        node_retry_service: Optional[NodeRetryService] = None,
     ):
         """
         初始化小说生成服务
@@ -90,7 +94,11 @@ class NovelGenerator(NovelGeneratorService):
             memory_store: 记忆存储
             observability: 可观测性后端
             config_provider: 配置提供者
+            event_bus: 事件总线
+            file_output_service: 文件输出服务
+            rag_service: RAG 检索服务
             state_manager: 状态管理服务
+            node_retry_service: 节点重试服务（可选）
         """
         self.llm_client = llm_client
         self.memory_store = memory_store
@@ -98,8 +106,9 @@ class NovelGenerator(NovelGeneratorService):
         self.config_provider = config_provider
         self.file_output = file_output_service
         self.rag = rag_service
-        self.websocket = websocket_service
+        self.event_bus = event_bus
         self.state_manager = state_manager
+        self.node_retry_service = node_retry_service
         
         self._current_task_id: Optional[str] = None
         self._is_running: bool = False
@@ -115,6 +124,19 @@ class NovelGenerator(NovelGeneratorService):
         self._mock_mode = generation_config.mock_mode 
         self.max_retries = getattr(generation_config, 'max_retries', 3)
         self.window_size = getattr(generation_config, 'window_size', 5)
+    
+    def _publish_event(self, event_type: str, data: dict) -> int:
+        """
+        发布事件到事件总线
+        
+        Args:
+            event_type: 事件类型
+            data: 事件数据
+            
+        Returns:
+            int: 通知的订阅者数量
+        """
+        return self.event_bus.publish(Event(type=event_type, data=data))
     
     def validate_request(self, request: GenerationRequest) -> bool:
         """
@@ -502,25 +524,15 @@ class NovelGenerator(NovelGeneratorService):
         """
         request = context.get("request")
 
-        # 构建流式回调函数（如果 WebSocket 服务可用）
+        # 构建流式回调函数（通过 EventBus 发布 token 事件）
         stream_callback = None
-        if self.websocket:
+        if self.event_bus:
             def _stream_callback(token: str) -> None:
-                # 使用 run_coroutine_threadsafe 在后台执行异步操作
-                try:
-                    loop = asyncio.get_event_loop()
-                    if loop.is_running():
-                        asyncio.run_coroutine_threadsafe(
-                            self.websocket.broadcast_token({
-                                "chapter": chapter_number,
-                                "node_id": node_id,
-                                "token": token,
-                            }),
-                            loop
-                        )
-                except RuntimeError:
-                    # 没有事件循环，忽略
-                    pass
+                self._publish_event("token", {
+                    "chapter": chapter_number,
+                    "node_id": node_id,
+                    "token": token,
+                })
             stream_callback = _stream_callback
 
         # 构建记忆更新回调
@@ -763,14 +775,13 @@ class NovelGenerator(NovelGeneratorService):
             node_id = node.get('node_id', f'node_{sequence.get_current_index()}')
             self._current_node = node_id
             
-            # WebSocket 广播进度
-            if self.websocket:
-                await self.websocket.broadcast_progress(
-                    current=chapter_number,
-                    total=self._total_chapters,
-                    percentage=(sequence.get_current_index() / len(node_sequence)) * 100,
-                    current_node=node_id,
-                )
+            # 广播进度事件
+            self._publish_event("progress", {
+                "current": chapter_number,
+                "total": self._total_chapters,
+                "percentage": round((sequence.get_current_index() / len(node_sequence)) * 100, 1),
+                "current_node": node_id,
+            })
             
             # 执行节点（带重试逻辑）
             node_result = await self._execute_node_with_retry(
@@ -900,9 +911,39 @@ class NovelGenerator(NovelGeneratorService):
                     'versions': node_versions,
                 }
                 
-                # 广播需要人工审查
-                if self.websocket:
-                    await self.websocket.broadcast_intervention(intervention_data)
+                # 设置待重试节点信息（供重试端点查询）
+                if self.node_retry_service:
+                    self.node_retry_service.set_pending_retry(
+                        chapter_id=chapter_number,
+                        node_id=node_id,
+                        node_index=current_index,
+                        versions=node_versions,
+                    )
+                    logger.info(f"[Intervention] Pending retry set for node {node_id}")
+                
+                # 广播需要人工审查事件
+                logger.info(f"[Intervention] Publishing need_manual_review event for node {node_id}")
+                result1 = self._publish_event("need_manual_review", intervention_data)
+                logger.info(f"[Intervention] need_manual_review published to {result1} subscribers")
+                
+                # 同时广播 status 事件，确保前端状态同步
+                logger.info(f"[Intervention] Publishing status event with need_human_intervention=True")
+                result2 = self._publish_event("status", {
+                    'current_chapter': chapter_number,
+                    'current_node': node_id,
+                    'total_chapters': self._total_chapters,
+                    'is_running': True,
+                    'is_paused': True,
+                    'is_stopped': False,
+                    'need_human_intervention': True,
+                    'intervention_data': intervention_data,
+                })
+                logger.info(f"[Intervention] status published to {result2} subscribers")
+                
+                # 短暂延迟，确保事件有时间被 WebSocket 发送
+                logger.info(f"[Intervention] Waiting 0.1s for events to be sent...")
+                await asyncio.sleep(0.1)
+                logger.info(f"[Intervention] Delay completed")
                 
                 # 设置干预状态并等待前端响应
                 self.state_manager.start_intervention(intervention_data)

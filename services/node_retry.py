@@ -15,6 +15,7 @@ from services.interfaces import (
     NodeRetryService,
     NodeRetryResult,
     NodeRetryError,
+    PendingRetryInfo,
 )
 
 logger = logging.getLogger(__name__)
@@ -62,12 +63,15 @@ class NodeRetryManager(NodeRetryService):
         # 节点错误记录: {(chapter_id, node_id): error_message}
         self._node_errors: Dict[tuple, str] = {}
         
+        # 待重试节点信息（人工干预时使用）
+        self._pending_retry: Optional[Dict[str, Any]] = None
+        
         # 线程安全
         self._lock = threading.RLock()
         
         logger.info("NodeRetryManager initialized")
     
-    def _get_key(self, chapter_id: int, node_id: str) -> tuple:
+    def _get_key(self, chapter_id: int, node_id: int) -> tuple:
         """
         生成存储键
         
@@ -83,7 +87,7 @@ class NodeRetryManager(NodeRetryService):
     async def retry_node(
         self,
         chapter_id: int,
-        node_id: str,
+        node_id: int,
     ) -> NodeRetryResult:
         """
         重试指定节点
@@ -156,7 +160,7 @@ class NodeRetryManager(NodeRetryService):
     def get_retry_count(
         self,
         chapter_id: int,
-        node_id: str,
+        node_id: int,
     ) -> int:
         """
         获取节点重试次数
@@ -179,7 +183,7 @@ class NodeRetryManager(NodeRetryService):
     def can_retry(
         self,
         chapter_id: int,
-        node_id: str,
+        node_id: int,
         max_retries: int = 3,
     ) -> bool:
         """
@@ -205,7 +209,7 @@ class NodeRetryManager(NodeRetryService):
     def clear_retry_history(
         self,
         chapter_id: int,
-        node_id: str,
+        node_id: int,
     ) -> bool:
         """
         清除重试历史
@@ -255,7 +259,7 @@ class NodeRetryManager(NodeRetryService):
     def record_failure(
         self,
         chapter_id: int,
-        node_id: str,
+        node_id: int,
         error_message: str,
     ) -> None:
         """
@@ -299,7 +303,7 @@ class NodeRetryManager(NodeRetryService):
     def get_retry_history(
         self,
         chapter_id: int,
-        node_id: str,
+        node_id: int,
     ) -> List[Dict[str, Any]]:
         """
         获取重试历史
@@ -331,7 +335,7 @@ class NodeRetryManager(NodeRetryService):
     def get_last_error(
         self,
         chapter_id: int,
-        node_id: str,
+        node_id: int,
     ) -> Optional[str]:
         """
         获取节点最后一次错误信息
@@ -363,7 +367,71 @@ class NodeRetryManager(NodeRetryService):
             self._retry_counts.clear()
             self._retry_history.clear()
             self._node_errors.clear()
+            self._pending_retry = None
             
             logger.info(f"All retry history cleared: {count} nodes")
             
             return count
+
+    def set_pending_retry(
+        self,
+        chapter_id: int,
+        node_id: int,
+        node_index: int,
+        versions: List[Dict[str, Any]],
+    ) -> None:
+        """
+        设置待重试节点（人工干预时调用）
+        
+        当节点超过最大重试次数触发人工干预时，将失败节点信息存储，
+        供后续重试端点查询使用。
+        
+        Args:
+            chapter_id: 章节ID
+            node_id: 节点ID
+            node_index: 节点索引
+            versions: 节点版本历史
+        """
+        with self._lock:
+            self._pending_retry = {
+                "chapter_id": chapter_id,
+                "node_id": node_id,
+                "node_index": node_index,
+                "versions": versions,
+                "timestamp": datetime.now().isoformat(),
+            }
+            logger.info(
+                f"Pending retry set: chapter={chapter_id}, node={node_id}, "
+                f"index={node_index}"
+            )
+
+    def get_pending_retry(self) -> Optional[PendingRetryInfo]:
+        """
+        获取待重试节点信息（重试端点调用）
+        
+        Returns:
+            Optional[PendingRetryInfo]: 待重试节点信息，如果没有则返回 None
+        """
+        with self._lock:
+            if self._pending_retry is None:
+                return None
+            
+            return PendingRetryInfo(
+                chapter_id=self._pending_retry["chapter_id"],
+                node_id=self._pending_retry["node_id"],
+                node_index=self._pending_retry["node_index"],
+                versions=self._pending_retry["versions"],
+                timestamp=self._pending_retry["timestamp"],
+            )
+
+    def clear_pending_retry(self) -> None:
+        """
+        清除待重试状态（重试成功后调用）
+        """
+        with self._lock:
+            if self._pending_retry is not None:
+                logger.info(
+                    f"Pending retry cleared: chapter={self._pending_retry['chapter_id']}, "
+                    f"node={self._pending_retry['node_id']}"
+                )
+                self._pending_retry = None

@@ -92,7 +92,11 @@ class NodeSequence:
     def get_retry_count(self) -> int:
         """获取重试计数"""
         return self.retry_count
-    
+
+    def reset_retry_count(self) -> None:
+        """重置重试计数"""
+        self.retry_count = 0
+
     def get_total_nodes(self) -> int:
         """获取节点总数"""
         return len(self.node_sequence)

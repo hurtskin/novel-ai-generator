@@ -12,6 +12,8 @@ from services.interfaces import (
     NodeRetryService,
     NodeRegenerateService,
     PerformanceMetricsService,
+    EventBus,
+    Event,
     GenerationRequest,
     GenerationResult,
     GenerationProgress,
@@ -46,7 +48,7 @@ from services.node_regenerate import NodeRegenerateManager
 from services.performance_metrics import PerformanceMetricsCollector
 from services.config_manager import ConfigManager
 from services.debug_log import DebugLogManager
-from services.websocket_broadcast import WebSocketBroadcastManager
+from services.event_bus import InMemoryEventBus
 from services.file_output import FileOutputManager
 from services.rag_retrieval import RAGRetrievalManager
 
@@ -63,7 +65,7 @@ __all__ = [
     "PerformanceMetricsService",
     "ConfigManagerService",
     "DebugLogService",
-    "WebSocketBroadcastService",
+    "EventBus",
     "FileOutputService",
     "RAGRetrievalService",
     # 服务实现
@@ -76,7 +78,7 @@ __all__ = [
     "PerformanceMetricsCollector",
     "ConfigManager",
     "DebugLogManager",
-    "WebSocketBroadcastManager",
+    "InMemoryEventBus",
     "FileOutputManager",
     "RAGRetrievalManager",
     # 数据类

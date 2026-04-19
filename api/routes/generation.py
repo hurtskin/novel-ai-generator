@@ -367,7 +367,7 @@ class NodeRetryResponse(BaseModel):
     status: str = Field(..., description="操作状态")
     message: str = Field(..., description="状态消息")
     chapter_id: int = Field(..., description="章节ID")
-    node_id: str = Field(..., description="节点ID")
+    node_id: int = Field(..., description="节点ID")
     retry_count: int = Field(..., description="当前重试次数")
     can_retry: bool = Field(..., description="是否还可以继续重试")
 
@@ -377,21 +377,26 @@ class NodeRetryResponse(BaseModel):
     response_model=NodeRetryResponse,
     status_code=status.HTTP_200_OK,
     summary="重试当前节点",
-    description="重试当前失败的节点生成",
+    description="重试当前失败的节点生成，支持自动重试和人工干预两种模式",
 )
 async def retry_node(
     state: GenerationState = Depends(get_generation_state),
     retry_service: NodeRetryService = Depends(get_node_retry_service),
+    state_manager: StateManagerService = Depends(get_state_manager_service),
 ) -> NodeRetryResponse:
     """
     重试当前节点
     
-    用于在节点生成失败后进行重试。
-    会自动增加重试计数，并检查是否超过最大重试次数。
+    统一的节点重试接口，同时支持：
+    1. 自动重试：记录重试次数，供生成器查询
+    2. 人工干预：触发实际的重试逻辑
+    
+    从 NodeRetryService 获取待重试节点信息，确保重试正确的节点。
+    调用 StateManagerService.retry_current_node() 触发实际重试流程。
     
     Note:
         - 需要当前有正在运行的生成任务
-        - 会自动使用当前章节和节点ID
+        - 会自动使用触发人工干预时的节点信息
     """
     # 验证是否有正在运行的任务
     if not state.is_running:
@@ -400,19 +405,27 @@ async def retry_node(
             detail="No generation task is running",
         )
     
-    # 验证当前章节和节点
-    if state.current_chapter < 0 or not state.current_node:
+    # 从 NodeRetryService 获取待重试节点信息
+    pending_retry = retry_service.get_pending_retry()
+    
+    if pending_retry is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="No active node to retry",
+            detail="No pending retry node found",
         )
     
-    chapter_id = state.current_chapter
-    node_id = state.current_node
+    chapter_id = pending_retry.chapter_id
+    node_id = pending_retry.node_id
     
     try:
-        # 执行重试
+        # 执行重试（记录重试次数）
         result = await retry_service.retry_node(chapter_id, node_id)
+        
+        # 触发实际重试逻辑（关键！这会设置 retry_current=True 并恢复生成流程）
+        state_manager.retry_current_node()
+        
+        # 清除待重试状态
+        retry_service.clear_pending_retry()
         
         # 检查是否还可以继续重试
         can_retry = retry_service.can_retry(chapter_id, node_id, max_retries=3)
@@ -639,7 +652,6 @@ async def _run_generation_task(
         request: 生成请求
         state: 生成状态
     """
-    from core.container_config import initialize_container_with_rag
     from services.interfaces import GenerationRequest as NovelGenerationRequest, NovelStyle
     
     try:
@@ -647,8 +659,19 @@ async def _run_generation_task(
         
         logger.info(f"Task {task_id} running with theme: {request.theme[:50]}...")
         
-        # 初始化依赖注入容器
-        container = initialize_container_with_rag()
+        # 延迟启动，给前端时间建立 WebSocket 连接
+        # 在 mock_mode 下生成速度很快，需要确保 WebSocket 连接建立后再开始
+        import asyncio
+        await asyncio.sleep(0.5)
+        logger.info(f"Task {task_id} starting after WebSocket delay")
+        
+        # 使用模块级别的容器实例，确保与 WebSocket 连接管理器使用同一个 EventBus
+        from api.dependencies import _container_instance
+        if _container_instance is None:
+            logger.error("Container instance not set")
+            raise RuntimeError("Container instance not set")
+        container = _container_instance
+        logger.info(f"Using shared container instance")
         
         # 获取小说生成服务
         novel_generator = container.resolve(NovelGeneratorService)
@@ -1051,18 +1074,6 @@ class SelectVersionResponse(BaseModel):
     version_index: int = Field(..., description="选择的版本索引")
 
 
-class RetryNodeResponse(BaseModel):
-    """
-    重试节点响应模型
-    
-    Attributes:
-        status: 操作状态
-        message: 状态消息
-    """
-    status: str = Field(..., description="操作状态")
-    message: str = Field(..., description="状态消息")
-
-
 @router.post(
     "/select_version",
     response_model=SelectVersionResponse,
@@ -1107,48 +1118,4 @@ async def select_version(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to select version: {str(e)}",
-        )
-
-
-@router.post(
-    "/retry_node",
-    response_model=RetryNodeResponse,
-    status_code=status.HTTP_200_OK,
-    summary="重试当前节点",
-    description="人工干预时选择重试当前节点",
-)
-async def retry_node(
-    state_manager: StateManagerService = Depends(get_state_manager_service),
-) -> RetryNodeResponse:
-    """
-    重试当前节点
-    
-    当生成流程触发人工干预时，前端调用此接口选择重试当前节点。
-    调用后，生成流程会清空当前节点的版本历史并重新生成。
-    
-    Args:
-        state_manager: 状态管理服务
-        
-    Returns:
-        RetryNodeResponse: 重试响应
-        
-    Raises:
-        HTTPException: 500 - 服务器内部错误
-    """
-    try:
-        # 重试当前节点
-        state_manager.retry_current_node()
-        
-        logger.info("Retry current node requested")
-        
-        return RetryNodeResponse(
-            status="success",
-            message="Retry current node requested",
-        )
-        
-    except Exception as e:
-        logger.error(f"Failed to retry node: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retry node: {str(e)}",
         )

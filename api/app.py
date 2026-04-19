@@ -36,10 +36,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
     os.makedirs("logs", exist_ok=True)
     os.makedirs("storage", exist_ok=True)
     
-    # 初始化依赖注入容器
-    from core.container_config import initialize_container
-    app.state.container = initialize_container()
-    logger.info("Dependency injection container initialized")
+    # 初始化依赖注入容器（仅在容器未初始化时创建）
+    # 避免覆盖 main.py 中已设置的容器，确保单例状态不丢失
+    if not hasattr(app.state, "container") or app.state.container is None:
+        from core.container_config import initialize_container
+        app.state.container = initialize_container()
+        logger.info("Dependency injection container initialized")
+    else:
+        logger.info(f"Using existing container from app.state: {id(app.state.container)}")
     
     yield
     
